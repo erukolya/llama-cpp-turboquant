@@ -58,7 +58,7 @@ jobs:
           key: ci-windows-x64-cuda-13.3
           evict-old-files: 1d
 
-      - name: Configure
+      - name: Configure and build CUDA backend and server
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
@@ -70,9 +70,6 @@ jobs:
             -DLLAMA_BUILD_SERVER=ON ^
             -DLLAMA_BUILD_BORINGSSL=ON ^
             -DGGML_RPC=ON
-
-      - name: Build CUDA backend and server
-        shell: cmd
-        run: |
           set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
+          if %NINJA_JOBS% LSS 1 set NINJA_JOBS=1
           cmake --build build --config Release -j %NINJA_JOBS% --target ggml-cuda llama-server
