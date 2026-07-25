@@ -34,7 +34,7 @@ Exact mode is equivalent to `--moe-stats-sample 1` and can noticeably reduce thr
 --moe-placement-file "B:\Ollama\stats\kat-coder-placement.csv"
 ```
 
-Placement collection reads tensor metadata only. It does not copy model data and should not measurably affect inference speed.
+Placement is read directly from the persistent model tensors and written once immediately after the model finishes loading. It does not copy model data and does not install an eval callback, so it does not affect inference throughput.
 
 All routed experts of one layer are stored in the same 3D tensor, so placement is reported for an expert range rather than as separate allocations for every expert ID.
 
@@ -48,7 +48,7 @@ All routed experts of one layer are stored in the same 3D tensor, so placement i
   --moe-placement-file "B:\Ollama\stats\kat-coder-placement.csv"
 ```
 
-Statistics and placement files are written during a normal shutdown, including `Ctrl+C`.
+The placement file appears after model loading. The statistics file is written during a normal shutdown, including `Ctrl+C`.
 
 ## Statistics CSV
 
@@ -82,4 +82,4 @@ Possible storage values include `RAM`, `VRAM`, `SHARED`, `ACCEL`, and `SPLIT`.
 - Reprocessed prompts are counted again because they represent real repeated compute.
 - Sampling estimates become more stable over longer and more varied workloads.
 - Router mode is not supported. Start `llama-server` with a concrete model.
-- Abrupt process termination can prevent the final files from being written.
+- Abrupt process termination can prevent the final statistics file from being written.
