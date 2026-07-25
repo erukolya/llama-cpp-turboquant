@@ -1,4 +1,4 @@
-name: Export exact Windows release matrix edit
+name: Prepare exact Windows release matrix commit
 
 on:
   pull_request:
@@ -9,10 +9,10 @@ on:
       - '.github/workflows/apply-release-matrix-once.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  export:
+  prepare:
     if: ${{ github.head_ref == 'agent/moe-expert-stats' }}
     runs-on: ubuntu-latest
     steps:
@@ -53,20 +53,70 @@ jobs:
           git diff -- .github/workflows/release.yml | grep -F -- "-        cuda: ['12.4', '13.3']"
           git diff -- .github/workflows/release.yml | grep -F -- "+        cuda: ['13.3']"
 
-      - name: Record commit metadata
-        shell: bash
-        run: |
-          git rev-parse HEAD > head-sha.txt
-          git rev-parse HEAD^{tree} > head-tree.txt
-          git hash-object .github/workflows/release.yml > release-blob.txt
+      - name: Create unreferenced commit object
+        id: prepare
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const cp = require('child_process');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const headSha = cp.execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+            const headTree = cp.execSync('git rev-parse HEAD^{tree}', { encoding: 'utf8' }).trim();
+            const content = fs.readFileSync('.github/workflows/release.yml').toString('base64');
 
-      - name: Upload verified file
+            const blob = await github.rest.git.createBlob({
+              owner,
+              repo,
+              content,
+              encoding: 'base64',
+            });
+
+            const tree = await github.rest.git.createTree({
+              owner,
+              repo,
+              base_tree: headTree,
+              tree: [
+                {
+                  path: '.github/workflows/release.yml',
+                  mode: '100644',
+                  type: 'blob',
+                  sha: blob.data.sha,
+                },
+                {
+                  path: '.github/workflows/server.yml',
+                  mode: '100644',
+                  type: 'blob',
+                  sha: '5a02cc15ad5e00be33934dc353f4da1f3eaed937',
+                },
+                {
+                  path: '.github/workflows/apply-release-matrix-once.yml',
+                  mode: '100644',
+                  type: 'blob',
+                  sha: null,
+                },
+              ],
+            });
+
+            const commit = await github.rest.git.createCommit({
+              owner,
+              repo,
+              message: 'ci: limit Windows release matrix',
+              tree: tree.data.sha,
+              parents: [headSha],
+            });
+
+            fs.writeFileSync('prepared-commit.txt', `${commit.data.sha}\n`);
+            fs.writeFileSync('prepared-tree.txt', `${tree.data.sha}\n`);
+            core.notice(`Prepared commit: ${commit.data.sha}`);
+
+      - name: Upload prepared commit metadata
         uses: actions/upload-artifact@v6
         with:
-          name: verified-release-matrix-edit
+          name: prepared-release-matrix-commit
           path: |
-            .github/workflows/release.yml
-            head-sha.txt
-            head-tree.txt
-            release-blob.txt
+            prepared-commit.txt
+            prepared-tree.txt
           if-no-files-found: error
