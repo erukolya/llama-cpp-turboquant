@@ -1,4 +1,4 @@
-name: Apply exact Windows release matrix edit
+name: Export exact Windows release matrix edit
 
 on:
   pull_request:
@@ -9,10 +9,10 @@ on:
       - '.github/workflows/apply-release-matrix-once.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  edit:
+  export:
     if: ${{ github.head_ref == 'agent/moe-expert-stats' }}
     runs-on: ubuntu-latest
     steps:
@@ -42,8 +42,6 @@ jobs:
           text = text.replace(old_cuda, new_cuda, 1)
           path.write_text(text, encoding='utf-8', newline='')
 
-          Path('.github/workflows/apply-release-matrix-once.yml').unlink()
-
       - name: Verify exact release diff
         shell: bash
         run: |
@@ -55,14 +53,20 @@ jobs:
           git diff -- .github/workflows/release.yml | grep -F -- "-        cuda: ['12.4', '13.3']"
           git diff -- .github/workflows/release.yml | grep -F -- "+        cuda: ['13.3']"
 
-      - name: Commit exact edit and remove this workflow
+      - name: Record commit metadata
         shell: bash
         run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/workflows/release.yml .github/workflows/apply-release-matrix-once.yml
-          git commit -m "ci: limit Windows release matrix"
-          git push origin HEAD:agent/moe-expert-stats
+          git rev-parse HEAD > head-sha.txt
+          git rev-parse HEAD^{tree} > head-tree.txt
+          git hash-object .github/workflows/release.yml > release-blob.txt
 
-# One-shot workflow; it deletes itself after the verified edit.
+      - name: Upload verified file
+        uses: actions/upload-artifact@v6
+        with:
+          name: verified-release-matrix-edit
+          path: |
+            .github/workflows/release.yml
+            head-sha.txt
+            head-tree.txt
+            release-blob.txt
+          if-no-files-found: error
