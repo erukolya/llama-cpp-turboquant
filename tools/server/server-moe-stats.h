@@ -8,11 +8,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <fstream>
 #include <iomanip>
 #include <map>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct server_moe_stats_options {
