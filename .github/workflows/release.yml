@@ -541,7 +541,6 @@ jobs:
       matrix:
         include:
           - arch: 'x64'
-          - arch: 'arm64'
 
     steps:
       - name: Clone
@@ -706,7 +705,7 @@ jobs:
 
     strategy:
       matrix:
-        cuda: ['12.4', '13.3']
+        cuda: ['13.3']
 
     steps:
       - name: Clone
