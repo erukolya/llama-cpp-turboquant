@@ -1,6 +1,6 @@
 #include "arg.h"
 #include "common.h"
-#include "server-moe-stats.h"
+#include "server-moe-profiler.h"
 
 #include <memory>
 
@@ -21,29 +21,37 @@ static bool common_params_parse_with_moe_stats(
         return false;
     }
 
-    if (options.output_path.empty()) {
+    if (options.stats_path.empty() && options.placement_path.empty()) {
         return true;
     }
 
     if (params.model.path.empty()) {
-        std::fprintf(stderr, "error: MoE expert statistics are not supported in router mode; start a single-model server\n");
+        std::fprintf(stderr, "error: MoE profiling is not supported in router mode; start a single-model server\n");
         return false;
     }
 
     if (params.cb_eval != nullptr) {
-        std::fprintf(stderr, "error: MoE expert statistics cannot replace an existing eval callback\n");
+        std::fprintf(stderr, "error: MoE profiling cannot replace an existing eval callback\n");
         return false;
     }
 
-    g_server_moe_stats = std::make_unique<server_moe_stats_collector>(options.output_path);
+    g_server_moe_stats = std::make_unique<server_moe_stats_collector>(std::move(options));
     params.cb_eval = server_moe_stats_collector::eval_callback;
     params.cb_eval_user_data = g_server_moe_stats.get();
 
-    // Warmup evaluates every expert and would pollute the real routing distribution.
-    params.warmup = false;
+    if (g_server_moe_stats->stats_enabled()) {
+        // Warmup evaluates every expert and would pollute the real routing distribution.
+        params.warmup = false;
+        std::fprintf(stderr,
+            "moe_stats: enabled, output '%s', sample 1/%u per layer (warmup disabled)\n",
+            g_server_moe_stats->stats_path().c_str(),
+            g_server_moe_stats->sample_rate());
+    }
 
-    std::fprintf(stderr, "moe_stats: enabled, output file '%s' (warmup disabled)\n",
-        g_server_moe_stats->output_path().c_str());
+    if (g_server_moe_stats->placement_enabled()) {
+        std::fprintf(stderr, "moe_placement: enabled, output '%s'\n",
+            g_server_moe_stats->placement_path().c_str());
+    }
 
     return true;
 }
