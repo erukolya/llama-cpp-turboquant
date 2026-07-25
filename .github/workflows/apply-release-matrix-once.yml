@@ -64,3 +64,5 @@ jobs:
           git add .github/workflows/release.yml .github/workflows/apply-release-matrix-once.yml
           git commit -m "ci: limit Windows release matrix"
           git push origin HEAD:agent/moe-expert-stats
+
+# One-shot workflow; it deletes itself after the verified edit.
