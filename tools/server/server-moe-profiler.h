@@ -367,7 +367,7 @@ private:
         bool sample = sample_rate_ == 1 || call_index == 0;
         if (!sample) {
             const uint64_t phase = layer >= 0 ? static_cast<uint64_t>(layer) % sample_rate_ : 0;
-            sample = ((call_index - 1 + phase) % sample_rate_) == 0;
+            sample = ((call_index + phase) % sample_rate_) == 0;
         }
 
         if (sample) {
