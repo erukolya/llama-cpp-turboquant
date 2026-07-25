@@ -1,0 +1,66 @@
+name: Apply exact Windows release matrix edit
+
+on:
+  pull_request:
+    types: [synchronize]
+    branches:
+      - feature/turboquant-kv-cache
+    paths:
+      - '.github/workflows/apply-release-matrix-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  edit:
+    if: ${{ github.head_ref == 'agent/moe-expert-stats' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v6
+        with:
+          ref: agent/moe-expert-stats
+          fetch-depth: 0
+
+      - name: Apply only the two requested matrix edits
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('.github/workflows/release.yml')
+          text = path.read_text(encoding='utf-8')
+
+          old_cpu = "          - arch: 'x64'\n          - arch: 'arm64'\n"
+          new_cpu = "          - arch: 'x64'\n"
+          old_cuda = "        cuda: ['12.4', '13.3']\n"
+          new_cuda = "        cuda: ['13.3']\n"
+
+          assert text.count(old_cpu) == 1, text.count(old_cpu)
+          assert text.count(old_cuda) == 1, text.count(old_cuda)
+
+          text = text.replace(old_cpu, new_cpu, 1)
+          text = text.replace(old_cuda, new_cuda, 1)
+          path.write_text(text, encoding='utf-8', newline='')
+
+          Path('.github/workflows/apply-release-matrix-once.yml').unlink()
+
+      - name: Verify exact release diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git diff --numstat -- .github/workflows/release.yml)" = $'1\t2\t.github/workflows/release.yml'
+          git diff --check
+          git diff -- .github/workflows/release.yml
+          git diff -- .github/workflows/release.yml | grep -F -- "-          - arch: 'arm64'"
+          git diff -- .github/workflows/release.yml | grep -F -- "-        cuda: ['12.4', '13.3']"
+          git diff -- .github/workflows/release.yml | grep -F -- "+        cuda: ['13.3']"
+
+      - name: Commit exact edit and remove this workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/release.yml .github/workflows/apply-release-matrix-once.yml
+          git commit -m "ci: limit Windows release matrix"
+          git push origin HEAD:agent/moe-expert-stats
