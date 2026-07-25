@@ -49,7 +49,7 @@ jobs:
       - name: ccache
         uses: ggml-org/ccache-action@v1.2.21
         with:
-          key: ci-windows-x64-cpu
+          key: ci-windows-x64-cpu-static
           variant: ccache
           evict-old-files: 1d
 
@@ -59,12 +59,10 @@ jobs:
           cmake -S . -B build -G "Ninja Multi-Config" `
             -DCMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake `
             -DGGML_NATIVE=OFF `
-            -DGGML_BACKEND_DL=ON `
-            -DGGML_CPU_ALL_VARIANTS=ON `
-            -DGGML_OPENMP=ON `
             -DLLAMA_BUILD_SERVER=ON `
             -DLLAMA_BUILD_BORINGSSL=ON `
-            -DGGML_RPC=ON
+            -DGGML_RPC=ON `
+            -DBUILD_SHARED_LIBS=OFF
 
       - name: Build
         shell: pwsh
