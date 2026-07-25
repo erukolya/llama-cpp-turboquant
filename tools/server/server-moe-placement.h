@@ -5,6 +5,8 @@
 #include "ggml-backend.h"
 #include "ggml.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <fstream>
