@@ -1,55 +1,38 @@
 name: TurboQuant+ Release
 
 on:
+  workflow_dispatch:
   push:
+    branches:
+      - 'agent/moe-expert-stats'
     tags:
       - 'tqp-v*'
+    paths:
+      - '.github/workflows/tqp-release.yml'
 
 env:
   CMAKE_ARGS: "-DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON"
 
 jobs:
-  macos-metal:
-    runs-on: macos-14
-
-    steps:
-      - name: Clone
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Build
-        run: |
-          cmake -B build \
-            -DGGML_METAL_USE_BF16=ON \
-            -DGGML_METAL_EMBED_LIBRARY=ON \
-            -DCMAKE_INSTALL_RPATH='@loader_path' \
-            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-            ${{ env.CMAKE_ARGS }}
-          cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
-
-      - name: Pack
-        run: |
-          cp LICENSE ./build/bin/
-          tar -czvf turboquant-plus-${{ github.ref_name }}-macos-arm64-metal.tar.gz \
-            -s ",./,turboquant-plus-${{ github.ref_name }}/," -C ./build/bin .
-
-      - name: Upload
-        uses: actions/upload-artifact@v6
-        with:
-          name: macos-arm64-metal
-          path: turboquant-plus-${{ github.ref_name }}-macos-arm64-metal.tar.gz
-
   windows-cuda:
     runs-on: windows-2022
 
     strategy:
       matrix:
-        cuda: ['12.4']
+        cuda: ['13.3']
 
     steps:
       - name: Clone
         uses: actions/checkout@v6
+
+      - name: Set package version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            "TQP_VERSION=${{ github.ref_name }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } else {
+            "TQP_VERSION=build-${{ github.run_number }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
 
       - name: Install Cuda Toolkit
         uses: ./.github/actions/windows-setup-cuda
@@ -72,99 +55,24 @@ jobs:
           cmake --build build --config Release -j %NINJA_JOBS%
 
       - name: Pack
+        shell: pwsh
         run: |
-          cp LICENSE ./build/bin/Release/
-          $dst='.\build\bin\Release\'
-          robocopy "${{env.CUDA_PATH}}\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
-          robocopy "${{env.CUDA_PATH}}\lib" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
-          robocopy "${{env.CUDA_PATH}}\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
-          7z a turboquant-plus-${{ github.ref_name }}-windows-x64-cuda${{ matrix.cuda }}.zip .\build\bin\Release\*
+          Copy-Item LICENSE ./build/bin/Release/
+          $dst = '.\build\bin\Release\'
+          robocopy "${{ env.CUDA_PATH }}\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          robocopy "${{ env.CUDA_PATH }}\lib" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          robocopy "${{ env.CUDA_PATH }}\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          7z a "turboquant-plus-${{ env.TQP_VERSION }}-windows-x64-cuda${{ matrix.cuda }}.zip" .\build\bin\Release\*
 
       - name: Upload
         uses: actions/upload-artifact@v6
         with:
           name: windows-x64-cuda${{ matrix.cuda }}
-          path: turboquant-plus-${{ github.ref_name }}-windows-x64-cuda${{ matrix.cuda }}.zip
-
-  linux-cpu:
-    runs-on: ubuntu-22.04
-
-    steps:
-      - name: Clone
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libssl-dev
-
-      - name: Build
-        run: |
-          cmake -B build \
-            -DCMAKE_INSTALL_RPATH='$ORIGIN' \
-            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-            -DGGML_BACKEND_DL=ON \
-            -DGGML_NATIVE=OFF \
-            -DGGML_CPU_ALL_VARIANTS=ON \
-            ${{ env.CMAKE_ARGS }}
-          cmake --build build --config Release -j $(nproc)
-
-      - name: Pack
-        run: |
-          cp LICENSE ./build/bin/
-          tar -czvf turboquant-plus-${{ github.ref_name }}-linux-x64-cpu.tar.gz \
-            --transform "s,^\.,turboquant-plus-${{ github.ref_name }}," -C ./build/bin .
-
-      - name: Upload
-        uses: actions/upload-artifact@v6
-        with:
-          name: linux-x64-cpu
-          path: turboquant-plus-${{ github.ref_name }}-linux-x64-cpu.tar.gz
-
-  linux-vulkan:
-    runs-on: ubuntu-22.04
-
-    steps:
-      - name: Clone
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Dependencies
-        run: |
-          wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
-          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
-          sudo apt-get update -y
-          sudo apt-get install -y build-essential mesa-vulkan-drivers vulkan-sdk libssl-dev
-
-      - name: Build
-        run: |
-          cmake -B build \
-            -DCMAKE_INSTALL_RPATH='$ORIGIN' \
-            -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-            -DGGML_BACKEND_DL=ON \
-            -DGGML_NATIVE=OFF \
-            -DGGML_CPU_ALL_VARIANTS=ON \
-            -DGGML_VULKAN=ON \
-            ${{ env.CMAKE_ARGS }}
-          cmake --build build --config Release -j $(nproc)
-
-      - name: Pack
-        run: |
-          cp LICENSE ./build/bin/
-          tar -czvf turboquant-plus-${{ github.ref_name }}-linux-x64-vulkan.tar.gz \
-            --transform "s,^\.,turboquant-plus-${{ github.ref_name }}," -C ./build/bin .
-
-      - name: Upload
-        uses: actions/upload-artifact@v6
-        with:
-          name: linux-x64-vulkan
-          path: turboquant-plus-${{ github.ref_name }}-linux-x64-vulkan.tar.gz
+          path: turboquant-plus-${{ env.TQP_VERSION }}-windows-x64-cuda${{ matrix.cuda }}.zip
 
   release:
-    needs: [macos-metal, windows-cuda, linux-cpu, linux-vulkan]
+    if: startsWith(github.ref, 'refs/tags/tqp-v')
+    needs: [windows-cuda]
     runs-on: ubuntu-latest
     permissions:
       contents: write
