@@ -21,6 +21,14 @@ struct llama_moe_compact_tensor_binding {
 class llama_moe_compact_registry {
 public:
     bool add(
+        const ggml_tensor * source,
+        int32_t layer,
+        const llama_moe_load_layer_placement & placement,
+        ggml_tensor ** cpu_slot,
+        ggml_tensor ** gpu_slot,
+        std::string & error);
+
+    bool add(
         const llama_moe_packed_tensor_layout & source,
         ggml_type type,
         const llama_moe_load_layer_placement & placement,
