@@ -49,7 +49,6 @@ public:
             const int32_t model_layer_count = static_cast<int32_t>(model->layers.size());
             int32_t experts_per_layer = -1;
             std::vector<std::string> layout_errors;
-            std::vector<std::string> layout_warnings;
             uint64_t actual_selected_bytes = 0;
             uint32_t actual_selected_experts = 0;
 
@@ -80,46 +79,25 @@ public:
                     continue;
                 }
 
-                if (tensors.empty()) {
-                    layout_errors.push_back("layer " + std::to_string(layer_index) + ": no routed expert tensors");
-                    continue;
-                }
-
                 int64_t layer_expert_count = -1;
                 uint64_t logical_expert_bytes = 0;
 
                 for (const ggml_tensor * tensor : tensors) {
-                    if (tensor->ne[2] <= 0) {
-                        layout_errors.push_back(
-                            "layer " + std::to_string(layer_index) + ": tensor '" + tensor->name +
-                            "' has no routed expert axis at ne[2]");
-                        continue;
-                    }
-                    if (tensor->nb[2] == 0) {
-                        layout_errors.push_back(
-                            "layer " + std::to_string(layer_index) + ": tensor '" + tensor->name +
-                            "' has zero expert stride nb[2]");
-                        continue;
-                    }
+                    validate_tensor(layer_index, tensor, layer_expert_count, logical_expert_bytes, layout_errors);
 
-                    if (layer_expert_count < 0) {
-                        layer_expert_count = tensor->ne[2];
-                    } else if (layer_expert_count != tensor->ne[2]) {
-                        layout_errors.push_back(
-                            "layer " + std::to_string(layer_index) +
-                            ": routed tensors disagree on expert count");
+                    if (dry_run_) {
+                        std::fprintf(stderr,
+                            "moe_plan:   tensor '%s' type=%s ne=[%lld,%lld,%lld,%lld] "
+                            "nb=[%zu,%zu,%zu,%zu] bytes=%zu\n",
+                            tensor->name,
+                            ggml_type_name(tensor->type),
+                            static_cast<long long>(tensor->ne[0]),
+                            static_cast<long long>(tensor->ne[1]),
+                            static_cast<long long>(tensor->ne[2]),
+                            static_cast<long long>(tensor->ne[3]),
+                            tensor->nb[0], tensor->nb[1], tensor->nb[2], tensor->nb[3],
+                            ggml_nbytes(tensor));
                     }
-
-                    const uint64_t stride = static_cast<uint64_t>(tensor->nb[2]);
-                    const uint64_t tensor_bytes = static_cast<uint64_t>(ggml_nbytes(tensor));
-                    const uint64_t required_bytes = stride * static_cast<uint64_t>(tensor->ne[2]);
-                    if (tensor_bytes < required_bytes) {
-                        layout_errors.push_back(
-                            "layer " + std::to_string(layer_index) + ": tensor '" + tensor->name +
-                            "' is smaller than nb[2] * ne[2]");
-                    }
-
-                    logical_expert_bytes += stride;
                 }
 
                 if (layer_expert_count <= 0 || logical_expert_bytes == 0) {
@@ -168,7 +146,8 @@ public:
                         has_gate_up ? "gate_up+down" : "gate+up+down",
                         static_cast<long long>(layer_expert_count),
                         plan_layer->gpu_experts.size(),
-                        static_cast<long long>(layer_expert_count - static_cast<int64_t>(plan_layer->gpu_experts.size())),
+                        static_cast<long long>(
+                            layer_expert_count - static_cast<int64_t>(plan_layer->gpu_experts.size())),
                         static_cast<unsigned long long>(logical_expert_bytes),
                         static_cast<unsigned long long>(intended_gpu_bytes));
                 }
@@ -183,7 +162,6 @@ public:
             std::vector<std::string> errors = structural.errors;
             std::vector<std::string> warnings = structural.warnings;
             errors.insert(errors.end(), layout_errors.begin(), layout_errors.end());
-            warnings.insert(warnings.end(), layout_warnings.begin(), layout_warnings.end());
 
             if (actual_selected_bytes != plan.selected_bytes) {
                 errors.push_back(
@@ -239,6 +217,44 @@ private:
         if (tensor != nullptr && seen.insert(tensor).second) {
             tensors.push_back(tensor);
         }
+    }
+
+    static void validate_tensor(
+            int32_t layer,
+            const ggml_tensor * tensor,
+            int64_t & layer_expert_count,
+            uint64_t & logical_expert_bytes,
+            std::vector<std::string> & errors) {
+        if (tensor->ne[2] <= 0) {
+            errors.push_back(
+                "layer " + std::to_string(layer) + ": tensor '" + tensor->name +
+                "' has no routed expert axis at ne[2]");
+            return;
+        }
+        if (tensor->nb[2] == 0) {
+            errors.push_back(
+                "layer " + std::to_string(layer) + ": tensor '" + tensor->name +
+                "' has zero expert stride nb[2]");
+            return;
+        }
+
+        if (layer_expert_count < 0) {
+            layer_expert_count = tensor->ne[2];
+        } else if (layer_expert_count != tensor->ne[2]) {
+            errors.push_back(
+                "layer " + std::to_string(layer) + ": routed tensors disagree on expert count");
+        }
+
+        const uint64_t stride = static_cast<uint64_t>(tensor->nb[2]);
+        const uint64_t tensor_bytes = static_cast<uint64_t>(ggml_nbytes(tensor));
+        const uint64_t last_expert_offset = stride * static_cast<uint64_t>(tensor->ne[2] - 1);
+        if (tensor_bytes <= last_expert_offset) {
+            errors.push_back(
+                "layer " + std::to_string(layer) + ": tensor '" + tensor->name +
+                "' does not contain the start of its last expert slice");
+        }
+
+        logical_expert_bytes += stride;
     }
 
     static const common_moe_expert_plan_layer * find_plan_layer(
