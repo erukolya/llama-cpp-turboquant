@@ -328,6 +328,19 @@ extern "C" {
     GGML_API int                  ggml_backend_sched_get_n_splits(ggml_backend_sched_t sched);
     GGML_API int                  ggml_backend_sched_get_n_copies(ggml_backend_sched_t sched);
 
+    // Cumulative selective host-to-device copies of MoE weight slices performed by the scheduler.
+    // These counters do not include activation/result transfers or full-tensor copies.
+    struct ggml_backend_sched_moe_copy_stats {
+        uint64_t weight_copy_bytes;    // actual bytes submitted to the destination backend, including padding
+        uint64_t weight_payload_bytes; // bytes belonging to selected expert slices, excluding padding
+        uint64_t expert_slices;        // number of logical expert slices copied across all packed tensors
+        uint64_t copy_calls;           // number of grouped backend copy submissions
+        uint64_t weight_inputs;        // number of packed MoE weight inputs handled by selective copying
+    };
+
+    GGML_API struct ggml_backend_sched_moe_copy_stats ggml_backend_sched_get_moe_copy_stats(ggml_backend_sched_t sched);
+    GGML_API void                                     ggml_backend_sched_reset_moe_copy_stats(ggml_backend_sched_t sched);
+
     GGML_API ggml_backend_buffer_type_t ggml_backend_sched_get_buffer_type(ggml_backend_sched_t sched, ggml_backend_t backend);
     GGML_API size_t                     ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
 

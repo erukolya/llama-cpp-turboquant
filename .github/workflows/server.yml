@@ -54,26 +54,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  source-snapshot:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Clone
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-          ref: ${{ github.event.inputs.sha || github.event.pull_request.head.sha || github.sha || github.head_ref || github.ref_name }}
-
-      - name: Pack source snapshot
-        run: git archive --format=zip --output=agent-source.zip HEAD
-
-      - name: Upload source snapshot
-        uses: actions/upload-artifact@v6
-        with:
-          name: agent-source
-          path: agent-source.zip
-          retention-days: 1
-
   ubuntu:
     runs-on: ubuntu-24.04-arm
 
