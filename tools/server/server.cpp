@@ -105,33 +105,38 @@ static bool common_params_parse_with_moe_stats(
     }
 
     if (!plan_options.plan_path.empty()) {
+        if (!plan_options.dry_run) {
+            std::fprintf(stderr,
+                "error: static MoE compact loading is currently model-load-only in V1.2; "
+                "ordinary server inference is disabled until mixed CPU/CUDA execution is implemented in V1.3. "
+                "Use llama-moe-load-check for the U2 memory validation, or add --moe-expert-plan-dry-run.\n");
+            return false;
+        }
+
         g_server_moe_plan = std::make_unique<server_moe_plan_validator>(
             plan_options.plan_path,
             params.model.path,
             plan_options.strict,
             plan_options.dry_run);
 
+        // Dry-run validates the real model tensor manifest without replacing
+        // the runtime packed tensors or changing inference behavior.
         auto load_placement = std::make_unique<server_moe_load_placement>();
         std::string placement_error;
         if (!load_placement->prepare(plan_options.plan_path, placement_error)) {
-            if (plan_options.strict || !plan_options.dry_run) {
+            if (plan_options.strict) {
                 std::fprintf(stderr, "error: cannot prepare MoE load placement: %s\n", placement_error.c_str());
                 return false;
             }
             std::fprintf(stderr,
                 "moe_plan: warning: load placement is unavailable: %s; continuing dry-run validation only\n",
                 placement_error.c_str());
-        } else if (!plan_options.dry_run) {
-            g_server_moe_load_placement = std::move(load_placement);
         }
 
         std::fprintf(stderr,
-            "moe_plan: enabled, input '%s', strict=%s, dry_run=%s, load_scope=%s\n",
+            "moe_plan: enabled, input '%s', strict=%s, dry_run=true, load_scope=dry-run-disabled\n",
             g_server_moe_plan->plan_path().c_str(),
-            g_server_moe_plan->strict() ? "true" : "false",
-            g_server_moe_plan->dry_run() ? "true" : "false",
-            g_server_moe_load_placement ? "ready" :
-                (plan_options.dry_run ? "dry-run-disabled" : "disabled"));
+            g_server_moe_plan->strict() ? "true" : "false");
     }
 
     return true;
