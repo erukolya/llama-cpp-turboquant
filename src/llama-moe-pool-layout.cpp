@@ -2,6 +2,8 @@
 
 #include "ggml.h"
 
+#include <utility>
+
 bool llama_moe_packed_tensor_layout_from_tensor(
         int32_t layer,
         const ggml_tensor * tensor,
