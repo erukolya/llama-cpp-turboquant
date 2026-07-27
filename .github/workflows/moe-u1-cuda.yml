@@ -1,0 +1,83 @@
+name: MoE U1 CUDA
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/moe-u1-cuda.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_ARGS: >-
+    -DLLAMA_BUILD_EXAMPLES=OFF
+    -DLLAMA_BUILD_TESTS=OFF
+    -DLLAMA_BUILD_TOOLS=ON
+    -DLLAMA_BUILD_SERVER=ON
+    -DGGML_NATIVE=OFF
+    -DGGML_CUDA=ON
+    -DGGML_CUDA_FA_ALL_QUANTS=ON
+    -DCMAKE_CUDA_ARCHITECTURES=120
+
+jobs:
+  windows-cuda-13-3:
+    runs-on: windows-2022
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v6
+
+      - name: Install CUDA 13.3
+        uses: ./.github/actions/windows-setup-cuda
+        with:
+          cuda_version: '13.3'
+
+      - name: Install Ninja
+        shell: pwsh
+        run: choco install ninja --no-progress
+
+      - name: Build
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          cmake -S . -B build -G "Ninja Multi-Config" %CMAKE_ARGS%
+          set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
+          cmake --build build --config Release -j %NINJA_JOBS%
+
+      - name: Package U1 validator
+        shell: pwsh
+        run: |
+          $dst = '.\build\bin\Release'
+          Copy-Item LICENSE $dst
+
+          robocopy "${{ env.CUDA_PATH }}\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+          robocopy "${{ env.CUDA_PATH }}\lib" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+          robocopy "${{ env.CUDA_PATH }}\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+
+          New-Item -ItemType Directory -Path "$dst\tools\moe-plan" -Force | Out-Null
+          Copy-Item .\tools\moe-plan\moe_plan.py "$dst\tools\moe-plan\"
+          Copy-Item .\tools\moe-plan\run-u1.ps1 "$dst\run-moe-u1.ps1"
+          Copy-Item .\gguf-py "$dst\gguf-py" -Recurse
+
+          @'
+          Branch: agent/static-moe-expert-placement
+          Commit: ${{ github.sha }}
+          CUDA: 13.3
+          CUDA architecture: 120
+          Purpose: U1 exact KAT plan/model dry-run validation only
+          '@ | Set-Content "$dst\U1-BUILD.txt" -Encoding UTF8
+
+          7z a moe-u1-windows-x64-cuda13.3-sm120.zip "$dst\*"
+
+      - name: Upload U1 package
+        uses: actions/upload-artifact@v6
+        with:
+          name: moe-u1-windows-x64-cuda13.3-sm120
+          path: moe-u1-windows-x64-cuda13.3-sm120.zip
+          retention-days: 7
