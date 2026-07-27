@@ -104,8 +104,10 @@ bool llama_moe_compact_storage::create(
 
 void llama_moe_compact_storage::clear() noexcept {
     tensors_.clear();
-    context_.reset();
+    // Backends may retain tensor-allocation bookkeeping in the buffer. Release
+    // the buffer while the metadata context and its tensor objects still exist.
     buffer_.reset();
+    context_.reset();
     logical_tensor_bytes_ = 0;
 }
 
