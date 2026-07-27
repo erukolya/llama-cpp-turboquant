@@ -59,6 +59,7 @@ private:
         int layer = -1;
         int64_t n_experts = 0;
         uint64_t size_bytes = 0;
+        uint64_t expert_stride_bytes = 0;
         std::string tensor;
         std::string storage;
         std::string buffer;
@@ -121,6 +122,7 @@ private:
         entry.layer = layer;
         entry.n_experts = tensor->ne[2];
         entry.size_bytes = static_cast<uint64_t>(ggml_nbytes(tensor));
+        entry.expert_stride_bytes = tensor->ne[2] > 0 ? static_cast<uint64_t>(tensor->nb[2]) : 0;
         entry.tensor = tensor->name;
         entry.storage = storage_name(tensor->buffer);
 
@@ -142,14 +144,15 @@ private:
             return;
         }
 
-        output << "layer,tensor,expert_first,expert_last,storage,buffer,device,size_mib\n";
+        output << "layer,tensor,expert_first,expert_last,storage,buffer,device,size_mib,size_bytes,n_experts,expert_stride_bytes\n";
         output << std::fixed << std::setprecision(3);
 
         for (const auto & entry : entries_) {
             const int64_t expert_last = entry.n_experts > 0 ? entry.n_experts - 1 : -1;
             output << entry.layer << ',' << csv_escape(entry.tensor) << ",0," << expert_last << ','
                    << entry.storage << ',' << csv_escape(entry.buffer) << ',' << csv_escape(entry.device) << ','
-                   << static_cast<double>(entry.size_bytes) / (1024.0 * 1024.0) << '\n';
+                   << static_cast<double>(entry.size_bytes) / (1024.0 * 1024.0) << ','
+                   << entry.size_bytes << ',' << entry.n_experts << ',' << entry.expert_stride_bytes << '\n';
         }
 
         output.flush();
