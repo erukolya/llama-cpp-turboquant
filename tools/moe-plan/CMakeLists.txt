@@ -70,6 +70,7 @@ if(BUILD_TESTING)
         ${POOL_PLAN_TEST_TARGET}
         ../../tests/test-moe-pool-plan.cpp
         ../../src/llama-moe-placement.cpp
+        ../../src/llama-moe-pool-layout.cpp
         ../../src/llama-moe-pool-plan.cpp)
     target_include_directories(
         ${POOL_PLAN_TEST_TARGET}
@@ -77,6 +78,7 @@ if(BUILD_TESTING)
             ${PROJECT_SOURCE_DIR}/src
             ${PROJECT_SOURCE_DIR}/include
             ${PROJECT_SOURCE_DIR}/ggml/include)
+    target_link_libraries(${POOL_PLAN_TEST_TARGET} PRIVATE ggml)
     target_compile_features(${POOL_PLAN_TEST_TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${POOL_PLAN_TEST_TARGET} COMMAND $<TARGET_FILE:${POOL_PLAN_TEST_TARGET}>)
     set_property(TEST ${POOL_PLAN_TEST_TARGET} PROPERTY LABELS main)
