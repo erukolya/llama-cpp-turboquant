@@ -1,0 +1,108 @@
+name: MoE U2 CUDA
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [synchronize]
+    paths:
+      - '.github/workflows/moe-u2-cuda.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_ARGS: >-
+    -DBUILD_SHARED_LIBS=OFF
+    -DLLAMA_CURL=OFF
+    -DLLAMA_BUILD_EXAMPLES=OFF
+    -DLLAMA_BUILD_TESTS=OFF
+    -DLLAMA_BUILD_TOOLS=ON
+    -DLLAMA_BUILD_SERVER=OFF
+    -DGGML_NATIVE=OFF
+    -DGGML_CUDA=ON
+    -DGGML_CUDA_FA_ALL_QUANTS=ON
+    -DCMAKE_CUDA_ARCHITECTURES=120
+
+jobs:
+  windows-cuda-13-3:
+    runs-on: windows-2022
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v6
+
+      - name: Install CUDA 13.3
+        uses: ./.github/actions/windows-setup-cuda
+        with:
+          cuda_version: '13.3'
+
+      - name: Install Ninja
+        shell: pwsh
+        run: choco install ninja --no-progress
+
+      - name: Validate U2 PowerShell
+        shell: pwsh
+        run: |
+          $null = [scriptblock]::Create(
+            (Get-Content .\tools\moe-plan\run-u2.ps1 -Raw -Encoding UTF8))
+
+      - name: Configure
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          cmake -S . -B build -G "Ninja Multi-Config" %CMAKE_ARGS%
+
+      - name: Build U2 targets
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
+          cmake --build build --config Release -j %NINJA_JOBS% --target llama-moe-load-check llama-moe-plan-check
+
+      - name: Package U2 validator
+        shell: pwsh
+        run: |
+          $src = '.\build\bin\Release'
+          $dst = '.\moe-u2-package'
+          New-Item -ItemType Directory -Path $dst -Force | Out-Null
+
+          Copy-Item "$src\llama-moe-load-check.exe" $dst
+          Copy-Item "$src\llama-moe-plan-check.exe" $dst
+          Copy-Item '.\tools\moe-plan\run-u2.ps1' "$dst\run-moe-u2.ps1"
+          Copy-Item LICENSE $dst
+
+          robocopy "${{ env.CUDA_PATH }}\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+          robocopy "${{ env.CUDA_PATH }}\lib" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+          robocopy "${{ env.CUDA_PATH }}\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+
+          @'
+          Branch: agent/static-moe-expert-placement
+          Commit: ${{ github.sha }}
+          CUDA: 13.3
+          CUDA architecture: 120
+          Build: static llama/ggml with CUDA
+          Purpose: U2 model-only exclusive compact CPU/CUDA expert pool validation
+          Restrictions: Qwen3.5/3.6 MoE, one CUDA GPU, --no-mmap, no inference context
+
+          Run from this directory:
+          .\run-moe-u2.ps1 -Model "B:\path\model.gguf" -Plan "B:\path\kat-static-plan.json"
+
+          Required success markers:
+          moe_u2: loaded
+          moe_u2: packed_runtime_tensors=0
+          moe_u2: accounting=ok
+          moe_u2: unloaded
+          '@ | Set-Content "$dst\U2-BUILD.txt" -Encoding UTF8
+
+          7z a moe-u2-windows-x64-cuda13.3-sm120.zip "$dst\*"
+
+      - name: Upload U2 package
+        uses: actions/upload-artifact@v6
+        with:
+          name: moe-u2-windows-x64-cuda13.3-sm120
+          path: moe-u2-windows-x64-cuda13.3-sm120.zip
+          retention-days: 7
