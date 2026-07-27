@@ -1,6 +1,8 @@
 # MoE expert placement implementation progress
 
-This file is the implementation tracker and source of truth for the static/adaptive per-expert MoE placement work.
+This file is the implementation tracker and source of truth for **Version 1: complete static per-expert MoE placement**.
+
+Version 2 adaptive rebalancing is intentionally out of scope. It must not be implemented, prototyped, or used to simplify Version 1. A future roadmap may be created only after Version 1 is correct, exclusive-residency, benchmarked, and accepted.
 
 Detailed requirements:
 
@@ -25,7 +27,7 @@ Active branches and pull requests:
 
 ## Project invariants
 
-These requirements are mandatory for the final implementation:
+These requirements are mandatory for the accepted Version 1 implementation:
 
 - hot routed expert weights are stored only in VRAM;
 - cold routed expert weights are stored only in RAM;
@@ -37,7 +39,9 @@ These requirements are mandatory for the final implementation:
 - CPU and CUDA branches must overlap where possible;
 - router scores, top-k selection, weights, quantization and model semantics are unchanged;
 - the feature is disabled by default until correctness and performance gates pass;
-- stock behavior without the feature flag must remain unchanged.
+- stock behavior without the feature flag must remain unchanged;
+- no dynamic cache, LRU, runtime miss loading, periodic rebalance or NVMe tier is part of Version 1;
+- Version 1 must be finished end-to-end before any adaptive placement work is considered.
 
 ## Current project state
 
@@ -63,12 +67,12 @@ These percentages are routing-selection coverage, not expected tokens/s improvem
 
 ---
 
-# Version 1 — static placement
+# Version 1 — complete static placement
 
 ## P0 — Requirements and architecture
 
 - [x] Write complete technical specification.
-- [x] Separate Version 1 and Version 2 requirements.
+- [x] Define Version 1 as the only active implementation scope.
 - [x] Record exclusive residency requirement.
 - [x] Record prohibition on decode-path weight streaming.
 - [x] Record correctness, memory, PCIe and benchmark acceptance criteria.
@@ -194,7 +198,8 @@ Do not manually mark these complete without checking the workflow result for the
 - split pools load successfully;
 - combined permanent CPU+VRAM expert bytes approximately equal original routed-expert bytes;
 - no persistent full-bank duplication;
-- inference path may still use a correctness/reference implementation, but model unload/reload is correct.
+- model unload/reload is correct;
+- reference correctness execution can read both pools without changing model semantics.
 
 ## V1.3 — Correct mixed CPU/GPU execution
 
@@ -229,6 +234,8 @@ Do not manually mark these complete without checking the workflow result for the
 - [ ] Add CPU compute, GPU compute and join-wait timers.
 - [ ] Confirm elapsed time approaches `max(CPU, GPU)` rather than their sum.
 
+**Exit gate for V1.4:** mixed execution overlaps measurably and does not copy routed-expert weights during decode.
+
 ## V1.5 — Integration, metrics and benchmarks
 
 - [ ] Integrate with `llama-server`.
@@ -237,8 +244,8 @@ Do not manually mark these complete without checking the workflow result for the
 - [ ] Preserve TurboQuant KV-cache functionality.
 - [ ] Add routing hit-rate metrics.
 - [ ] Add activation transfer counters.
-- [ ] Add expert-weight migration counter.
-- [ ] Confirm weight migration counter remains zero after model load.
+- [ ] Add expert-weight transfer counter.
+- [ ] Confirm expert-weight transfer counter remains zero after model load during normal decode.
 - [ ] Benchmark prompt processing separately from token generation.
 - [ ] Benchmark current layer placement versus static per-expert placement.
 - [ ] Measure RAM and VRAM.
@@ -246,77 +253,53 @@ Do not manually mark these complete without checking the workflow result for the
 - [ ] Produce reproducible benchmark report.
 - [ ] Keep the feature disabled by default until acceptance gates pass.
 
+## V1.6 — Production hardening and final acceptance
+
+- [ ] Validate clean startup and shutdown.
+- [ ] Validate model reload/unload.
+- [ ] Validate long-running server execution.
+- [ ] Validate `--parallel 1` end-to-end.
+- [ ] Detect and reject unsupported multi-GPU/RPC/backend combinations explicitly.
+- [ ] Validate fallback when no plan is supplied.
+- [ ] Validate strict failure for incompatible plan/model.
+- [ ] Validate non-strict fallback behavior.
+- [ ] Document supported models, quant types and backends.
+- [ ] Document exact user workflow: profile → plan → launch.
+- [ ] Produce final KAT benchmark and memory report.
+
 **Version 1 acceptance gate:**
 
-- correctness accepted;
-- no persistent expert duplication;
-- no routed-expert weight transfer during normal decode;
+- all Version 1 tests and required CI are green;
+- correctness is accepted;
+- no persistent routed-expert duplication exists;
+- no routed-expert weight transfer occurs during normal decode;
+- CPU experts execute on CPU and GPU experts execute on CUDA;
+- mixed top-k output matches baseline within accepted numerical tolerance;
 - actual GPU selection coverage matches the plan within expected profiling error;
+- model load, unload and server shutdown are stable;
+- TurboQuant KV-cache functionality remains working;
 - no token-generation regression greater than 5%;
-- target token-generation improvement is at least 15% on the primary KAT workload, or a documented bottleneck analysis explains why not.
+- target token-generation improvement is at least 15% on the primary KAT workload, or a documented bottleneck analysis explains why not;
+- the complete profile → plan → static placement workflow is documented and reproducible.
+
+Version 1 is **not complete** when only the planner or loader works. It is complete only after the full acceptance gate above passes.
 
 ---
 
-# Version 2 — adaptive rare rebalancing
+# Explicitly deferred work
 
-Version 2 begins only after Version 1 is stable and benchmarked.
+The following work is not part of the current roadmap:
 
-## V2.1 — Low-overhead live heat tracking
+- periodic or runtime expert rebalancing;
+- EWMA heat tracking for migration;
+- LRU/LFU expert cache;
+- cache-miss loading;
+- RAM/VRAM expert swaps during server operation;
+- NVMe expert tier;
+- migration generations and rollback;
+- adaptive placement APIs.
 
-- [ ] Collect routing counts without callback-induced GPU synchronization.
-- [ ] Track lifetime hits.
-- [ ] Track recent-window hits.
-- [ ] Track EWMA score.
-- [ ] Track prompt and decode statistics separately.
-- [ ] Track residency age and migration count.
-
-## V2.2 — Rebalance planner
-
-- [ ] Compute candidate placement from live EWMA heat.
-- [ ] Use score per byte.
-- [ ] Add minimum relative gain threshold.
-- [ ] Add minimum residency period.
-- [ ] Add cooldown.
-- [ ] Add maximum swaps per cycle.
-- [ ] Prevent placement thrashing.
-
-Default target settings:
-
-```text
-rebalance interval:       60 minutes
-minimum residency:       120 minutes
-minimum relative gain:    20%
-maximum swaps per cycle:  64
-```
-
-## V2.3 — Idle-time transactional migration
-
-- [ ] Rebalance only between requests/all slots idle initially.
-- [ ] Add temporary staging buffer.
-- [ ] Swap GPU and CPU experts transactionally.
-- [ ] Use backend events for completion.
-- [ ] Atomically publish a new location-table generation.
-- [ ] Roll back on migration failure.
-- [ ] Remove transient duplicates after commit.
-- [ ] Persist new plan atomically.
-
-## V2.4 — Operational integration
-
-- [ ] Add manual rebalance trigger.
-- [ ] Add placement and statistics endpoint or command.
-- [ ] Add rebalance metrics.
-- [ ] Load latest valid persisted plan at startup.
-- [ ] Detect corrupt/incompatible persisted plan.
-- [ ] Benchmark adaptation across different workloads.
-
-**Version 2 acceptance gate:**
-
-- no migration during active requests in idle-only mode;
-- failed migration rolls back safely;
-- permanent placement remains exclusive;
-- weight transfers occur only during explicit rebalance;
-- hysteresis prevents repeated swaps;
-- restart restores the last valid placement generation.
+Do not add these features to the current branch. They may be reconsidered only after Version 1 is merged and accepted.
 
 ---
 
@@ -342,3 +325,6 @@ Do not mark an item complete solely because code was written. It is complete onl
 - Marked specification, execution-path analysis, offline planner and C++ plan contract as completed.
 - Marked CI validation and model-aware dry run as active.
 - Blocked split-pool allocation until CI and model-aware validation gates pass.
+- Removed Version 2 from the active implementation roadmap.
+- Declared complete, production-ready static Version 1 as the only current objective.
+- Added V1.6 production-hardening and final-acceptance phase.
