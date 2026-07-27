@@ -8,6 +8,26 @@ if(LLAMA_TOOLS_INSTALL)
     install(TARGETS ${TARGET} RUNTIME)
 endif()
 
+# The U2 loader intentionally inspects internal model-owned compact storages.
+# Keep it in static builds so no internal C++ ABI has to become part of the
+# shared llama library contract.
+if(NOT BUILD_SHARED_LIBS)
+    set(U2_LOAD_TARGET llama-moe-load-check)
+    add_executable(${U2_LOAD_TARGET} u2-main.cpp)
+    target_include_directories(
+        ${U2_LOAD_TARGET}
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/ggml/include)
+    target_link_libraries(${U2_LOAD_TARGET} PRIVATE llama-common)
+    target_compile_features(${U2_LOAD_TARGET} PRIVATE cxx_std_17)
+
+    if(LLAMA_TOOLS_INSTALL)
+        install(TARGETS ${U2_LOAD_TARGET} RUNTIME)
+    endif()
+endif()
+
 if(BUILD_TESTING)
     set(TEST_TARGET test-moe-expert-plan)
     add_executable(${TEST_TARGET} ../../tests/test-moe-expert-plan.cpp)
