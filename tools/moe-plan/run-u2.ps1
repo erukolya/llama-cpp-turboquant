@@ -55,6 +55,40 @@ function Capture-Command {
     }
 }
 
+function Read-GpuMemory {
+    param([string] $NvidiaSmiPath)
+
+    $result = @()
+    if (-not $NvidiaSmiPath) {
+        return $result
+    }
+
+    try {
+        $lines = & $NvidiaSmiPath `
+            --query-gpu=index,name,memory.total,memory.free `
+            --format=csv,noheader,nounits 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            return $result
+        }
+        foreach ($line in $lines) {
+            $parts = @($line -split ',\s*')
+            if ($parts.Count -lt 4) {
+                continue
+            }
+            $result += [ordered]@{
+                index = [int] $parts[0]
+                name = $parts[1]
+                total_mib = [uint64] $parts[2]
+                free_mib = [uint64] $parts[3]
+            }
+        }
+    } catch {
+        return @()
+    }
+
+    return $result
+}
+
 $modelPath = (Resolve-Path -LiteralPath $Model -ErrorAction Stop).Path
 $planPath = (Resolve-Path -LiteralPath $Plan -ErrorAction Stop).Path
 
@@ -80,13 +114,32 @@ New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
 $stdoutPath = Join-Path $outputPath "u2.stdout.log"
 $stderrPath = Join-Path $outputPath "u2.stderr.log"
 $versionPath = Join-Path $outputPath "u2.version.log"
+$systemPath = Join-Path $outputPath "system-memory.json"
 $nvidiaBeforePath = Join-Path $outputPath "nvidia-smi.before.log"
 $nvidiaAfterPath = Join-Path $outputPath "nvidia-smi.after.log"
 $summaryPath = Join-Path $outputPath "u2-result.json"
 
 Capture-Command -Command $checker -Arguments @("--help") -OutputPath $versionPath
 
+$totalPhysicalMemoryBytes = $null
+try {
+    $computerSystem = Get-CimInstance Win32_ComputerSystem
+    $operatingSystem = Get-CimInstance Win32_OperatingSystem
+    $totalPhysicalMemoryBytes = [uint64] $computerSystem.TotalPhysicalMemory
+    [ordered]@{
+        total_physical_memory_bytes = $totalPhysicalMemoryBytes
+        total_visible_memory_kib = [uint64] $operatingSystem.TotalVisibleMemorySize
+        free_physical_memory_kib = [uint64] $operatingSystem.FreePhysicalMemory
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $systemPath -Encoding UTF8
+} catch {
+    [ordered]@{
+        error = $_.Exception.Message
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $systemPath -Encoding UTF8
+}
+
 $nvidiaSmi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+$nvidiaSmiPath = if ($nvidiaSmi) { $nvidiaSmi.Source } else { $null }
+$gpuMemoryBefore = Read-GpuMemory -NvidiaSmiPath $nvidiaSmiPath
 if ($nvidiaSmi) {
     Capture-Command -Command $nvidiaSmi.Source -Arguments @() -OutputPath $nvidiaBeforePath
 } else {
@@ -122,6 +175,7 @@ try {
 } catch {
 }
 
+$gpuMemoryAfter = Read-GpuMemory -NvidiaSmiPath $nvidiaSmiPath
 if ($nvidiaSmi) {
     Capture-Command -Command $nvidiaSmi.Source -Arguments @() -OutputPath $nvidiaAfterPath
 } else {
@@ -167,6 +221,9 @@ $summary = [ordered]@{
     timeout_minutes = $TimeoutMinutes
     timed_out = $timedOut
     exit_code = $exitCode
+    total_physical_memory_bytes = $totalPhysicalMemoryBytes
+    gpu_memory_before = $gpuMemoryBefore
+    gpu_memory_after = $gpuMemoryAfter
     required_markers = $requiredMarkers
     missing_markers = $missingMarkers
     values = $markerValues
