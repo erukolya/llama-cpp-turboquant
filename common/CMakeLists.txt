@@ -86,6 +86,8 @@ add_library(${TARGET}
     llguidance.cpp
     log.cpp
     log.h
+    moe-expert-plan.cpp
+    moe-expert-plan.h
     ngram-cache.cpp
     ngram-cache.h
     ngram-map.cpp
