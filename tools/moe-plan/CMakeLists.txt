@@ -55,7 +55,11 @@ if(BUILD_TESTING)
             ${PROJECT_SOURCE_DIR}/src
             ${PROJECT_SOURCE_DIR}/include
             ${PROJECT_SOURCE_DIR}/ggml/include)
-    target_compile_definitions(${LOAD_SHARED_TEST_TARGET} PRIVATE LLAMA_SHARED)
+    target_compile_definitions(
+        ${LOAD_SHARED_TEST_TARGET}
+        PRIVATE
+            LLAMA_SHARED
+            LLAMA_MOE_SHARED_API_TEST)
     target_link_libraries(${LOAD_SHARED_TEST_TARGET} PRIVATE ${LOAD_SHARED_LIB_TARGET})
     target_compile_features(${LOAD_SHARED_TEST_TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${LOAD_SHARED_TEST_TARGET} COMMAND $<TARGET_FILE:${LOAD_SHARED_TEST_TARGET}>)
