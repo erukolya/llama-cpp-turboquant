@@ -55,7 +55,7 @@ Planned hardware checkpoints:
 
 **Current phase:** V1.2 exclusive split storage and selective loading.
 
-**Current decision:** immutable placement ownership and compact tensor copy planning are implemented; actual allocation remains gated by automated C++ validation.
+**Current decision:** exact source metadata, immutable placement, compact pool planning and source-only GGUF tensor claims are validated. The active step is wiring these contracts into Qwen3.5 MoE model-owned CPU/CUDA storages without ever creating the original persistent packed routed tensors.
 
 Confirmed baseline:
 
@@ -105,7 +105,7 @@ Q4 adds 862 hot experts, improves estimated GPU coverage by 6.806 percentage poi
 - [x] Loader, graph and `MUL_MAT_ID` paths located.
 - [x] Selective RAM-to-CUDA expert-slice copy path confirmed.
 - [x] Tensor views rejected as an exclusive-residency solution.
-- [~] Scheduler/public API counters for selective weight copies and CPU/accelerator `MUL_MAT_ID`; implemented, latest CI pending.
+- [x] Scheduler/public API counters for selective weight copies and CPU/accelerator `MUL_MAT_ID`.
 
 ## V1.1 — Planner, contract and exact model validation
 
@@ -134,14 +134,16 @@ Q4 adds 862 hot experts, improves estimated GPU coverage by 6.806 percentage poi
 - [x] Move validated placement access to the model-loading boundary.
 - [x] Deep-copy immutable placement before the server load scope ends.
 - [x] Plan compact CPU/GPU tensor shapes, exact bytes and coalesced copy spans.
+- [x] Convert real GGUF `ggml_tensor` metadata into exact compact source layouts.
+- [x] Claim packed GGUF tensors as slice sources without standard runtime allocation.
 - [x] Validate all-CPU, all-GPU and mixed compact-pool plans.
 - [ ] Create compact CPU routed-expert pools.
 - [ ] Create compact CUDA routed-expert pools.
-- [ ] Support separate and merged gate-up tensors.
-- [ ] Copy quantized slices without dequantization.
-- [ ] Validate quant-block and backend alignment.
-- [ ] Read slices directly from GGUF/mmap/staging.
-- [ ] Avoid allocating the original persistent packed routed tensors.
+- [ ] Support separate and merged gate-up tensors in model loading.
+- [~] Copy quantized slices without dequantization; loader path implemented, model integration pending.
+- [~] Validate quant-block and backend alignment; exact strides validated, backend gate pending.
+- [~] Read slices directly from GGUF/mmap/staging; loader path implemented, lifecycle integration pending.
+- [ ] Avoid allocating the original persistent packed routed tensors in Qwen3.5 MoE.
 - [ ] Prove no complete RAM expert bank remains.
 - [ ] Add all-CPU, all-GPU and mixed loading tests.
 - [ ] Add exact RAM/VRAM accounting.
@@ -218,9 +220,12 @@ Do not implement on the current branch:
 
 ## 2026-07-28
 
+- Fixed the Windows shared-library smoke test without exporting the internal placement dimension validator; both Windows and Ubuntu MoE CI jobs passed.
 - Added immutable deep-copy placement snapshots at the model-loading boundary.
-- Fixed the internal load-scope test so Windows shared-library builds do not require private symbol exports.
 - Added compact tensor pool planning with exact CPU/GPU shapes, bytes and coalesced source-copy spans.
+- Added exact adapters from real `ggml_tensor` metadata into compact source layouts.
+- Added a loader contract that claims packed tensors as selective slice sources without adding them to standard model buffers.
+- Added registry support and tests for constructing compact pools directly from real tensor metadata.
 - Added mixed, all-GPU, invalid-size, invalid-axis and duplicate-destination tests.
 
 ## 2026-07-27
