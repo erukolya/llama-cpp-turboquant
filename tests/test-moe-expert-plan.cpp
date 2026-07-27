@@ -106,6 +106,42 @@ static void test_manifest_validation() {
         "legacy plan accepted when manifest required");
 }
 
+static void test_location_table() {
+    const auto plan = make_valid_plan();
+    common_moe_expert_placement placement;
+    std::string error;
+    require(common_moe_expert_placement_build(plan, placement, error), error.c_str());
+
+    require(placement.layers.size() == 2, "placement layer count mismatch");
+    require(placement.logical_expert_count == 4, "placement logical expert count mismatch");
+    require(placement.gpu_expert_count == 2, "placement GPU expert count mismatch");
+    require(placement.cpu_expert_count == 2, "placement CPU expert count mismatch");
+    require(placement.gpu_bytes == 300, "placement GPU bytes mismatch");
+    require(placement.cpu_bytes == 300, "placement CPU bytes mismatch");
+
+    const auto * layer0 = placement.find_layer(0);
+    require(layer0 != nullptr, "layer 0 lookup failed");
+    require(layer0->expert_bytes == 100, "layer 0 expert bytes mismatch");
+    require(layer0->gpu_experts == std::vector<uint32_t>({0}), "layer 0 GPU list mismatch");
+    require(layer0->cpu_experts == std::vector<uint32_t>({1}), "layer 0 CPU list mismatch");
+    require(layer0->global_to_local[0].backend == common_moe_expert_backend::gpu,
+        "global expert 0 should map to GPU");
+    require(layer0->global_to_local[0].local_index == 0, "GPU local index mismatch");
+    require(layer0->global_to_local[1].backend == common_moe_expert_backend::cpu,
+        "global expert 1 should map to CPU");
+    require(layer0->global_to_local[1].local_index == 0, "CPU local index mismatch");
+    require(placement.find_layer(2) == nullptr, "out-of-range layer lookup succeeded");
+
+    auto invalid = plan;
+    invalid.layers[0].gpu_bytes += 1;
+    require(!common_moe_expert_placement_build(invalid, placement, error),
+        "inconsistent per-layer GPU bytes accepted");
+
+    auto legacy = make_valid_plan(1);
+    require(!common_moe_expert_placement_build(legacy, placement, error),
+        "schema v1 accepted for exclusive placement");
+}
+
 static void test_round_trip() {
     const std::string path = "test-moe-expert-plan.tmp.json";
     const auto plan = make_valid_plan();
@@ -156,6 +192,7 @@ static void test_malformed_json() {
 int main() {
     test_validation();
     test_manifest_validation();
+    test_location_table();
     test_round_trip();
     test_legacy_round_trip();
     test_malformed_json();
