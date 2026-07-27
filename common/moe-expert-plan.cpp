@@ -6,6 +6,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -59,6 +60,26 @@ int32_t read_i32(const json & object, const char * name) {
     return static_cast<int32_t>(parsed);
 }
 
+int64_t read_i64_value(const json & value, const char * name) {
+    if (!value.is_number_integer()) {
+        throw std::runtime_error(std::string("field '") + name + "' contains a non-integer item");
+    }
+    return value.get<int64_t>();
+}
+
+uint64_t read_u64_value(const json & value, const char * name) {
+    if (value.is_number_unsigned()) {
+        return value.get<uint64_t>();
+    }
+    if (value.is_number_integer()) {
+        const int64_t parsed = value.get<int64_t>();
+        if (parsed >= 0) {
+            return static_cast<uint64_t>(parsed);
+        }
+    }
+    throw std::runtime_error(std::string("field '") + name + "' contains a negative or non-integer item");
+}
+
 double read_double(const json & object, const char * name) {
     const json & value = require_member(object, name);
     if (!value.is_number()) {
@@ -98,22 +119,11 @@ std::vector<uint32_t> read_u32_array(const json & object, const char * name) {
     std::vector<uint32_t> result;
     result.reserve(value.size());
     for (const auto & item : value) {
-        if (!item.is_number_unsigned() && !item.is_number_integer()) {
-            throw std::runtime_error(std::string("field '") + name + "' contains a non-integer item");
-        }
-        if (item.is_number_unsigned()) {
-            const uint64_t unsigned_value = item.get<uint64_t>();
-            if (unsigned_value > std::numeric_limits<uint32_t>::max()) {
-                throw std::runtime_error(std::string("field '") + name + "' contains an out-of-range item");
-            }
-            result.push_back(static_cast<uint32_t>(unsigned_value));
-            continue;
-        }
-        const int64_t signed_value = item.get<int64_t>();
-        if (signed_value < 0 || static_cast<uint64_t>(signed_value) > std::numeric_limits<uint32_t>::max()) {
+        const uint64_t parsed = read_u64_value(item, name);
+        if (parsed > std::numeric_limits<uint32_t>::max()) {
             throw std::runtime_error(std::string("field '") + name + "' contains an out-of-range item");
         }
-        result.push_back(static_cast<uint32_t>(signed_value));
+        result.push_back(static_cast<uint32_t>(parsed));
     }
     return result;
 }
@@ -134,6 +144,30 @@ std::vector<std::string> read_string_array(const json & object, const char * nam
     return result;
 }
 
+std::array<int64_t, 4> read_i64_array4(const json & object, const char * name) {
+    const json & value = require_member(object, name);
+    if (!value.is_array() || value.size() != 4) {
+        throw std::runtime_error(std::string("field '") + name + "' must contain exactly four integers");
+    }
+    std::array<int64_t, 4> result;
+    for (size_t index = 0; index < result.size(); ++index) {
+        result[index] = read_i64_value(value[index], name);
+    }
+    return result;
+}
+
+std::array<uint64_t, 4> read_u64_array4(const json & object, const char * name) {
+    const json & value = require_member(object, name);
+    if (!value.is_array() || value.size() != 4) {
+        throw std::runtime_error(std::string("field '") + name + "' must contain exactly four integers");
+    }
+    std::array<uint64_t, 4> result;
+    for (size_t index = 0; index < result.size(); ++index) {
+        result[index] = read_u64_value(value[index], name);
+    }
+    return result;
+}
+
 common_moe_expert_plan parse_plan(const json & root) {
     common_moe_expert_plan plan;
     plan.schema_version = read_u32(root, "schema_version");
@@ -150,6 +184,27 @@ common_moe_expert_plan parse_plan(const json & root) {
     plan.estimated_total_hits = read_u64(root, "estimated_total_hits");
     plan.estimated_gpu_hits = read_u64(root, "estimated_gpu_hits");
     plan.estimated_gpu_hit_rate = read_double(root, "estimated_gpu_hit_rate");
+
+    if (plan.schema_version >= 2) {
+        const json & manifest = require_member(root, "tensor_manifest");
+        if (!manifest.is_array()) {
+            throw std::runtime_error("field 'tensor_manifest' must be an array");
+        }
+        plan.tensor_manifest.reserve(manifest.size());
+        for (const auto & item : manifest) {
+            common_moe_expert_plan_tensor tensor;
+            tensor.layer = read_i32(item, "layer");
+            tensor.name = read_string(item, "name");
+            tensor.type = read_string(item, "type");
+            tensor.expert_first = read_u32(item, "expert_first");
+            tensor.expert_last = read_u32(item, "expert_last");
+            tensor.size_bytes = read_u64(item, "size_bytes");
+            tensor.expert_stride_bytes = read_u64(item, "expert_stride_bytes");
+            tensor.ne = read_i64_array4(item, "ne");
+            tensor.nb = read_u64_array4(item, "nb");
+            plan.tensor_manifest.push_back(std::move(tensor));
+        }
+    }
 
     const json & layers = require_member(root, "layers");
     if (!layers.is_array()) {
@@ -183,7 +238,8 @@ json serialize_plan(const common_moe_expert_plan & plan) {
             {"estimated_gpu_hit_rate", layer.estimated_gpu_hit_rate},
         });
     }
-    return {
+
+    json root = {
         {"schema_version", plan.schema_version},
         {"strategy", plan.strategy},
         {"model_fingerprint", plan.model_fingerprint.empty() ? json(nullptr) : json(plan.model_fingerprint)},
@@ -198,8 +254,28 @@ json serialize_plan(const common_moe_expert_plan & plan) {
         {"estimated_total_hits", plan.estimated_total_hits},
         {"estimated_gpu_hits", plan.estimated_gpu_hits},
         {"estimated_gpu_hit_rate", plan.estimated_gpu_hit_rate},
-        {"layers", std::move(layers)},
     };
+
+    if (plan.schema_version >= 2 || !plan.tensor_manifest.empty()) {
+        json manifest = json::array();
+        for (const auto & tensor : plan.tensor_manifest) {
+            manifest.push_back({
+                {"layer", tensor.layer},
+                {"name", tensor.name},
+                {"type", tensor.type},
+                {"expert_first", tensor.expert_first},
+                {"expert_last", tensor.expert_last},
+                {"size_bytes", tensor.size_bytes},
+                {"expert_stride_bytes", tensor.expert_stride_bytes},
+                {"ne", tensor.ne},
+                {"nb", tensor.nb},
+            });
+        }
+        root["tensor_manifest"] = std::move(manifest);
+    }
+
+    root["layers"] = std::move(layers);
+    return root;
 }
 
 void add_error(common_moe_expert_plan_validation & result, const std::string & value) {
@@ -263,7 +339,7 @@ common_moe_expert_plan_validation common_moe_expert_plan_validate(
         const common_moe_expert_plan_expectation & expectation) {
     common_moe_expert_plan_validation result;
 
-    if (plan.schema_version != 1) {
+    if (plan.schema_version != 1 && plan.schema_version != 2) {
         add_error(result, "unsupported schema_version: " + std::to_string(plan.schema_version));
     }
     if (plan.strategy.empty()) {
@@ -311,7 +387,8 @@ common_moe_expert_plan_validation common_moe_expert_plan_validate(
         }
         for (uint32_t expert : layer.gpu_experts) {
             if (expert >= layer.expert_count) {
-                add_error(result, "layer " + std::to_string(layer.layer) + " contains out-of-range GPU expert " + std::to_string(expert));
+                add_error(result, "layer " + std::to_string(layer.layer) +
+                    " contains out-of-range GPU expert " + std::to_string(expert));
             }
         }
         if (layer.estimated_gpu_hits > layer.estimated_hits) {
@@ -321,7 +398,8 @@ common_moe_expert_plan_validation common_moe_expert_plan_validate(
             add_error(result, "layer " + std::to_string(layer.layer) + " GPU hit rate is outside [0, 1]");
         }
         if (layer.estimated_hits == 0 && layer.estimated_gpu_hit_rate != 0.0) {
-            add_warning(result, "layer " + std::to_string(layer.layer) + " has a non-zero hit rate with zero hits");
+            add_warning(result, "layer " + std::to_string(layer.layer) +
+                " has a non-zero hit rate with zero hits");
         }
 
         summed_bytes += layer.gpu_bytes;
@@ -353,7 +431,8 @@ common_moe_expert_plan_validation common_moe_expert_plan_validate(
     if (expectation.experts_per_layer >= 0) {
         for (const auto & layer : plan.layers) {
             if (static_cast<int32_t>(layer.expert_count) != expectation.experts_per_layer) {
-                add_error(result, "layer " + std::to_string(layer.layer) + " expert count does not match model expectation");
+                add_error(result, "layer " + std::to_string(layer.layer) +
+                    " expert count does not match model expectation");
             }
         }
     }
@@ -365,6 +444,67 @@ common_moe_expert_plan_validation common_moe_expert_plan_validate(
         }
     } else if (plan.model_fingerprint.empty()) {
         add_warning(result, "plan has no model_fingerprint; only structural validation is possible");
+    }
+
+    if (plan.schema_version >= 2 && plan.tensor_manifest.empty()) {
+        add_error(result, "schema v2 plan has an empty tensor_manifest");
+    }
+    if (expectation.require_tensor_manifest && plan.tensor_manifest.empty()) {
+        add_error(result, "tensor_manifest is required");
+    }
+
+    std::set<std::pair<int32_t, std::string>> tensor_keys;
+    std::map<int32_t, std::set<std::pair<uint32_t, uint32_t>>> ranges_by_layer;
+    for (const auto & tensor : plan.tensor_manifest) {
+        const std::string label = "tensor '" + tensor.name + "'";
+        if (tensor.layer < 0) {
+            add_error(result, label + " has a negative layer");
+        }
+        if (tensor.name.empty()) {
+            add_error(result, "tensor manifest contains an empty name");
+        }
+        if (tensor.type.empty()) {
+            add_error(result, label + " has an empty type");
+        }
+        if (!tensor_keys.insert({tensor.layer, tensor.name}).second) {
+            add_error(result, "duplicate tensor manifest entry: layer " +
+                std::to_string(tensor.layer) + ", " + tensor.name);
+        }
+        if (layer_ids.find(tensor.layer) == layer_ids.end()) {
+            add_error(result, label + " references a layer absent from the placement plan");
+        }
+        if (tensor.expert_last < tensor.expert_first) {
+            add_error(result, label + " has an invalid expert range");
+        }
+        const uint64_t expert_count =
+            static_cast<uint64_t>(tensor.expert_last) - tensor.expert_first + 1;
+        if (tensor.ne[2] <= 0 || static_cast<uint64_t>(tensor.ne[2]) != expert_count) {
+            add_error(result, label + " ne[2] differs from its expert range");
+        }
+        if (tensor.expert_stride_bytes == 0 || tensor.nb[2] != tensor.expert_stride_bytes) {
+            add_error(result, label + " nb[2] differs from expert_stride_bytes");
+        }
+        for (size_t dimension = 0; dimension < 4; ++dimension) {
+            if (tensor.ne[dimension] <= 0) {
+                add_error(result, label + " contains a non-positive ne value");
+            }
+            if (tensor.nb[dimension] == 0) {
+                add_error(result, label + " contains a zero nb value");
+            }
+        }
+        if (tensor.size_bytes == 0) {
+            add_error(result, label + " has zero size_bytes");
+        } else if (tensor.size_bytes <=
+                tensor.expert_stride_bytes * static_cast<uint64_t>(tensor.expert_last)) {
+            add_error(result, label + " does not contain the start of its last expert slice");
+        }
+        ranges_by_layer[tensor.layer].insert({tensor.expert_first, tensor.expert_last});
+    }
+    for (const auto & item : ranges_by_layer) {
+        if (item.second.size() != 1) {
+            add_error(result, "layer " + std::to_string(item.first) +
+                " tensor manifest contains inconsistent expert ranges");
+        }
     }
 
     return result;

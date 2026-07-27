@@ -99,6 +99,7 @@ static bool common_params_parse_with_moe_stats(
     if (!plan_options.plan_path.empty()) {
         g_server_moe_plan = std::make_unique<server_moe_plan_validator>(
             plan_options.plan_path,
+            params.model.path,
             plan_options.strict,
             plan_options.dry_run);
         std::fprintf(stderr,

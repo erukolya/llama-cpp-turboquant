@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Build a deterministic static MoE expert placement plan from profiler CSV files.
+"""Build a deterministic static MoE expert placement plan from profiler data.
 
-The planner is intentionally offline. It does not modify model weights or inference.
-It consumes the CSV files emitted by llama-server's --moe-stats and
---moe-placement options and chooses a hot expert set under a VRAM byte budget.
+The preferred path reads routed tensor metadata directly from a GGUF model, so
+the resulting schema-v2 plan contains an exact tensor manifest. Legacy
+placement CSV input remains supported and produces schema v1 unless it includes
+the exact type/ne/nb columns emitted by the updated server.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import csv
 import hashlib
 import json
 import math
+import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -21,7 +23,14 @@ from pathlib import Path
 from typing import Sequence
 
 MIB = 1024 * 1024
-SCHEMA_VERSION = 1
+SCHEMA_VERSION_LEGACY = 1
+SCHEMA_VERSION_MANIFEST = 2
+ROUTED_TENSOR_RE = re.compile(
+    r"^blk\.(?P<layer>\d+)\.ffn_(?:gate_exps|up_exps|gate_up_exps|down_exps)\.(?:weight|bias)$"
+)
+FINGERPRINT_SAMPLE_BYTES = 4 * MIB
+FNV1A64_OFFSET = 14695981039346656037
+FNV1A64_PRIME = 1099511628211
 
 
 class PlanError(RuntimeError):
@@ -50,10 +59,17 @@ class PlacementTensor:
     storage: str
     buffer: str
     device: str
+    tensor_type: str = ""
+    ne: tuple[int, int, int, int] | None = None
+    nb: tuple[int, int, int, int] | None = None
 
     @property
     def expert_count(self) -> int:
         return self.expert_last - self.expert_first + 1
+
+    @property
+    def has_exact_layout(self) -> bool:
+        return bool(self.tensor_type) and self.ne is not None and self.nb is not None
 
 
 @dataclass(frozen=True)
@@ -136,6 +152,27 @@ def _mib_to_bytes(value: str, source: Path, line: int) -> int:
     return int((decimal * MIB).to_integral_value(rounding=ROUND_HALF_UP))
 
 
+def _read_layout(row: dict[str, str], fields: set[str], source: Path, line: int):
+    layout_fields = {
+        "type", "ne0", "ne1", "ne2", "ne3",
+        "nb0", "nb1", "nb2", "nb3",
+    }
+    present = layout_fields.intersection(fields)
+    if not present:
+        return "", None, None
+    missing = layout_fields.difference(fields)
+    if missing:
+        raise PlanError(
+            f"{source}: exact tensor layout columns are incomplete; missing {', '.join(sorted(missing))}"
+        )
+    tensor_type = _required(row, "type", source, line)
+    ne = tuple(_parse_int(_required(row, f"ne{i}", source, line), f"ne{i}", source, line) for i in range(4))
+    nb = tuple(_parse_int(_required(row, f"nb{i}", source, line), f"nb{i}", source, line) for i in range(4))
+    if any(value <= 0 for value in ne) or any(value <= 0 for value in nb):
+        raise PlanError(f"{source}:{line}: tensor ne/nb values must be positive")
+    return tensor_type, ne, nb
+
+
 def read_placement(path: Path) -> list[PlacementTensor]:
     rows: list[PlacementTensor] = []
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -169,6 +206,12 @@ def read_placement(path: Path) -> list[PlacementTensor]:
                 stride = size_bytes // count
             if size_bytes <= 0 or stride <= 0:
                 raise PlanError(f"{path}:{line}: zero or negative tensor size")
+            tensor_type, ne, nb = _read_layout(row, fields, path, line)
+            if ne is not None:
+                if ne[2] != count:
+                    raise PlanError(f"{path}:{line}: ne2 differs from expert range")
+                if nb is None or nb[2] != stride:
+                    raise PlanError(f"{path}:{line}: nb2 differs from expert_stride_bytes")
             rows.append(PlacementTensor(
                 layer=layer,
                 tensor=_required(row, "tensor", path, line),
@@ -179,20 +222,149 @@ def read_placement(path: Path) -> list[PlacementTensor]:
                 storage=row.get("storage", ""),
                 buffer=row.get("buffer", ""),
                 device=row.get("device", ""),
+                tensor_type=tensor_type,
+                ne=ne,
+                nb=nb,
             ))
     if not rows:
         raise PlanError(f"{path}: no placement rows")
     return rows
 
 
+def _gguf_import():
+    repo_root = Path(__file__).resolve().parents[2]
+    gguf_path = repo_root / "gguf-py"
+    if str(gguf_path) not in sys.path:
+        sys.path.insert(0, str(gguf_path))
+    try:
+        from gguf import GGUFReader
+        from gguf.constants import GGML_QUANT_SIZES
+    except ImportError as exc:
+        raise PlanError("failed to import bundled gguf-py; run from the repository checkout") from exc
+    return GGUFReader, GGML_QUANT_SIZES
+
+
+def _fnv1a64_update(value: int, data: bytes) -> int:
+    for byte in data:
+        value ^= byte
+        value = (value * FNV1A64_PRIME) & 0xFFFFFFFFFFFFFFFF
+    return value
+
+
+def sampled_model_fingerprint(path: Path) -> str:
+    size = path.stat().st_size
+    value = _fnv1a64_update(FNV1A64_OFFSET, size.to_bytes(8, "little", signed=False))
+    with path.open("rb") as handle:
+        first = handle.read(min(size, FINGERPRINT_SAMPLE_BYTES))
+        value = _fnv1a64_update(value, first)
+        if size > FINGERPRINT_SAMPLE_BYTES:
+            offset = max(FINGERPRINT_SAMPLE_BYTES, size - FINGERPRINT_SAMPLE_BYTES)
+            value = _fnv1a64_update(value, offset.to_bytes(8, "little", signed=False))
+            handle.seek(offset)
+            value = _fnv1a64_update(value, handle.read(size - offset))
+    return f"sampled-fnv1a64:{value:016x}"
+
+
+def read_model_placement(path: Path) -> tuple[list[PlacementTensor], str]:
+    GGUFReader, quant_sizes = _gguf_import()
+    try:
+        reader = GGUFReader(path)
+    except (OSError, ValueError, KeyError) as exc:
+        raise PlanError(f"{path}: failed to read GGUF metadata: {exc}") from exc
+
+    rows: list[PlacementTensor] = []
+
+    for tensor in sorted(reader.tensors, key=lambda item: item.name):
+        shape_values = [int(value) for value in tensor.shape.tolist()]
+        shape_values += [1] * (4 - len(shape_values))
+        if len(shape_values) != 4:
+            raise PlanError(f"{path}: tensor {tensor.name!r} has more than four dimensions")
+        ne = tuple(shape_values)
+        type_name = tensor.tensor_type.name
+
+        match = ROUTED_TENSOR_RE.match(tensor.name)
+        if match is None:
+            continue
+
+        block_size, type_size = quant_sizes[tensor.tensor_type]
+        if ne[0] % block_size != 0:
+            raise PlanError(
+                f"{path}: tensor {tensor.name!r} ne0={ne[0]} is not divisible by quant block {block_size}"
+            )
+        nb0 = int(type_size)
+        nb1 = nb0 * (ne[0] // int(block_size))
+        nb2 = nb1 * ne[1]
+        nb3 = nb2 * ne[2]
+        nb = (nb0, nb1, nb2, nb3)
+        computed_bytes = nb3 * ne[3]
+        if computed_bytes != tensor.n_bytes:
+            raise PlanError(
+                f"{path}: tensor {tensor.name!r} byte size {tensor.n_bytes} "
+                f"differs from computed contiguous size {computed_bytes}"
+            )
+        if ne[2] <= 0:
+            raise PlanError(f"{path}: tensor {tensor.name!r} has no expert axis at ne2")
+
+        rows.append(PlacementTensor(
+            layer=int(match.group("layer")),
+            tensor=tensor.name,
+            expert_first=0,
+            expert_last=ne[2] - 1,
+            size_bytes=tensor.n_bytes,
+            expert_stride_bytes=nb2,
+            storage="GGUF",
+            buffer="",
+            device="",
+            tensor_type=type_name,
+            ne=ne,
+            nb=nb,
+        ))
+
+    if not rows:
+        raise PlanError(f"{path}: no supported routed MoE tensors found")
+    return rows, sampled_model_fingerprint(path)
+
+
+def placement_has_manifest(rows: Sequence[PlacementTensor]) -> bool:
+    exact = [row.has_exact_layout for row in rows]
+    if any(exact) and not all(exact):
+        raise PlanError("placement metadata mixes exact and legacy tensor rows")
+    return all(exact)
+
+
+def tensor_manifest(rows: Sequence[PlacementTensor]) -> list[dict]:
+    if not placement_has_manifest(rows):
+        return []
+    return [
+        {
+            "layer": row.layer,
+            "name": row.tensor,
+            "type": row.tensor_type,
+            "expert_first": row.expert_first,
+            "expert_last": row.expert_last,
+            "size_bytes": row.size_bytes,
+            "expert_stride_bytes": row.expert_stride_bytes,
+            "ne": list(row.ne or ()),
+            "nb": list(row.nb or ()),
+        }
+        for row in sorted(rows, key=lambda item: (item.layer, item.tensor))
+    ]
+
+
 def placement_fingerprint(rows: Sequence[PlacementTensor]) -> str:
     digest = hashlib.sha256()
+    exact = placement_has_manifest(rows)
     for row in sorted(rows, key=lambda x: (x.layer, x.tensor, x.expert_first, x.expert_last)):
         normalized = (
             f"{row.layer}|{row.tensor}|{row.expert_first}|{row.expert_last}|"
-            f"{row.size_bytes}|{row.expert_stride_bytes}\n"
+            f"{row.size_bytes}|{row.expert_stride_bytes}"
         )
-        digest.update(normalized.encode("utf-8"))
+        if exact:
+            normalized += (
+                f"|{row.tensor_type}|{','.join(map(str, row.ne or ()))}|"
+                f"{','.join(map(str, row.nb or ()))}"
+            )
+        digest.update((normalized + "\n").encode("utf-8"))
     return "sha256:" + digest.hexdigest()
 
 
@@ -257,7 +429,8 @@ def build_plan(
     selected: Sequence[ExpertCandidate],
     budget_bytes: int,
     stats_path: Path,
-    placement_path: Path,
+    source_layout: Path,
+    placement_rows: Sequence[PlacementTensor],
     placement_hash: str,
     model_fingerprint: str | None,
 ) -> dict:
@@ -283,13 +456,14 @@ def build_plan(
             "estimated_gpu_hits": layer_gpu_hits,
             "estimated_gpu_hit_rate": (layer_gpu_hits / layer_hits) if layer_hits else 0.0,
         })
-    return {
-        "schema_version": SCHEMA_VERSION,
+    manifest = tensor_manifest(placement_rows)
+    plan = {
+        "schema_version": SCHEMA_VERSION_MANIFEST if manifest else SCHEMA_VERSION_LEGACY,
         "strategy": "greedy_hits_per_byte",
         "model_fingerprint": model_fingerprint,
         "placement_fingerprint": placement_hash,
         "source_profiles": [str(stats_path)],
-        "source_placement": str(placement_path),
+        "source_placement": str(source_layout),
         "vram_budget_bytes": budget_bytes,
         "selected_bytes": selected_bytes,
         "unused_budget_bytes": budget_bytes - selected_bytes,
@@ -300,6 +474,9 @@ def build_plan(
         "estimated_gpu_hit_rate": (gpu_hits / total_hits) if total_hits else 0.0,
         "layers": layers,
     }
+    if manifest:
+        plan["tensor_manifest"] = manifest
+    return plan
 
 
 def write_plan(path: Path, plan: dict) -> None:
@@ -335,13 +512,20 @@ def write_report(path: Path, candidates: Sequence[ExpertCandidate], selected: Se
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stats", type=Path, required=True, help="CSV emitted by --moe-stats-file")
-    parser.add_argument("--placement", type=Path, required=True, help="CSV emitted by --moe-placement-file")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--placement", type=Path, help="CSV emitted by --moe-placement-file")
+    source.add_argument("--model", type=Path, help="GGUF model; preferred, creates exact schema-v2 manifest")
     budget = parser.add_mutually_exclusive_group(required=True)
     budget.add_argument("--vram-budget-mib", type=Decimal, help="routed-expert VRAM budget in MiB")
     budget.add_argument("--vram-budget-bytes", type=int, help="routed-expert VRAM budget in bytes")
     parser.add_argument("--output", type=Path, required=True, help="versioned JSON plan")
     parser.add_argument("--report", type=Path, help="optional per-expert CSV report")
-    parser.add_argument("--model-fingerprint", help="optional externally computed model fingerprint")
+    parser.add_argument("--model-fingerprint", help="optional externally computed model fingerprint override")
+    parser.add_argument(
+        "--require-manifest",
+        action="store_true",
+        help="reject legacy placement metadata that cannot produce an exact tensor manifest",
+    )
     return parser.parse_args(argv)
 
 
@@ -353,7 +537,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             budget_bytes = int((args.vram_budget_mib * MIB).to_integral_value(rounding=ROUND_HALF_UP))
         stats = read_stats(args.stats)
-        placement = read_placement(args.placement)
+        if args.model is not None:
+            placement, computed_model_fingerprint = read_model_placement(args.model)
+            source_layout = args.model
+        else:
+            placement = read_placement(args.placement)
+            computed_model_fingerprint = None
+            source_layout = args.placement
+        if args.require_manifest and not placement_has_manifest(placement):
+            raise PlanError("exact tensor manifest required; pass --model or regenerate placement CSV")
         sizes = logical_expert_sizes(placement)
         candidates = build_candidates(stats, sizes)
         selected = select_candidates(candidates, budget_bytes)
@@ -362,15 +554,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             selected,
             budget_bytes,
             args.stats,
-            args.placement,
+            source_layout,
+            placement,
             placement_fingerprint(placement),
-            args.model_fingerprint,
+            args.model_fingerprint or computed_model_fingerprint,
         )
         write_plan(args.output, plan)
         if args.report:
             write_report(args.report, candidates, selected)
         print(
-            f"selected {plan['selected_expert_count']}/{plan['logical_expert_count']} experts, "
+            f"schema v{plan['schema_version']}: selected "
+            f"{plan['selected_expert_count']}/{plan['logical_expert_count']} experts, "
             f"{plan['selected_bytes'] / MIB:.3f} MiB, "
             f"estimated GPU hit rate {plan['estimated_gpu_hit_rate'] * 100:.3f}%"
         )
