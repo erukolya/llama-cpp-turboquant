@@ -7,6 +7,10 @@ on:
       - agent/static-moe-expert-placement
     paths:
       - '.github/workflows/moe-source-snapshot.yml'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/moe-source-snapshot.yml'
 
 permissions:
   contents: read
