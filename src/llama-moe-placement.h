@@ -1,5 +1,7 @@
 #pragma once
 
+#include "llama.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -38,7 +40,7 @@ struct llama_moe_load_layer_placement {
     uint32_t gpu_expert_count = 0;
     std::vector<llama_moe_load_location> global_to_local;
 
-    const llama_moe_load_location * find(uint32_t global_expert) const noexcept;
+    LLAMA_API const llama_moe_load_location * find(uint32_t global_expert) const noexcept;
 };
 
 // Deep-copied immutable placement owned by the model-loading core. The source
@@ -49,12 +51,12 @@ struct llama_moe_load_placement_snapshot {
     uint32_t gpu_expert_count = 0;
     std::vector<llama_moe_load_layer_placement> layers;
 
-    bool empty() const noexcept;
-    const llama_moe_load_layer_placement * find_layer(int32_t layer) const noexcept;
-    bool query(int32_t layer, uint32_t global_expert, llama_moe_load_location * location) const noexcept;
+    LLAMA_API bool empty() const noexcept;
+    LLAMA_API const llama_moe_load_layer_placement * find_layer(int32_t layer) const noexcept;
+    LLAMA_API bool query(int32_t layer, uint32_t global_expert, llama_moe_load_location * location) const noexcept;
 };
 
-bool llama_moe_load_placement_snapshot_build(
+LLAMA_API bool llama_moe_load_placement_snapshot_build(
     const llama_moe_load_placement_view & view,
     llama_moe_load_placement_snapshot & snapshot,
     std::string & error);
@@ -63,8 +65,8 @@ bool llama_moe_load_placement_snapshot_build(
 // model-loading thread. Nested scopes restore the previous snapshot.
 class llama_moe_load_placement_scope {
 public:
-    explicit llama_moe_load_placement_scope(const llama_moe_load_placement_snapshot * snapshot) noexcept;
-    ~llama_moe_load_placement_scope();
+    LLAMA_API explicit llama_moe_load_placement_scope(const llama_moe_load_placement_snapshot * snapshot) noexcept;
+    LLAMA_API ~llama_moe_load_placement_scope();
 
     llama_moe_load_placement_scope(const llama_moe_load_placement_scope &) = delete;
     llama_moe_load_placement_scope & operator=(const llama_moe_load_placement_scope &) = delete;
@@ -73,4 +75,4 @@ private:
     const llama_moe_load_placement_snapshot * previous_ = nullptr;
 };
 
-const llama_moe_load_placement_snapshot * llama_moe_load_placement_current() noexcept;
+LLAMA_API const llama_moe_load_placement_snapshot * llama_moe_load_placement_current() noexcept;
