@@ -95,5 +95,30 @@ int main() {
     require(plan.cpu_spans.empty() && plan.gpu_spans.size() == 1,
         "all-GPU span coalescing mismatch");
 
+    std::vector<llama_moe_pool_copy_span> valid_spans = {
+        {0, 0, 1, 0, 0, 64},
+        {2, 1, 1, 128, 64, 64},
+    };
+    require(llama_moe_pool_copy_spans_validate(256, 128, valid_spans, error), error.c_str());
+
+    auto destination_gap = valid_spans;
+    destination_gap[1].destination_offset_bytes = 96;
+    require(!llama_moe_pool_copy_spans_validate(256, 160, destination_gap, error),
+        "destination gap must be rejected");
+
+    auto source_overlap = valid_spans;
+    source_overlap[1].source_offset_bytes = 32;
+    require(!llama_moe_pool_copy_spans_validate(256, 128, source_overlap, error),
+        "source overlap must be rejected");
+
+    auto source_oob = valid_spans;
+    source_oob[1].source_offset_bytes = 224;
+    require(!llama_moe_pool_copy_spans_validate(256, 128, source_oob, error),
+        "source out-of-bounds span must be rejected");
+
+    std::vector<llama_moe_pool_copy_span> no_spans;
+    require(llama_moe_pool_copy_spans_validate(256, 0, no_spans, error),
+        "zero-sized destination should accept no spans");
+
     return 0;
 }

@@ -72,6 +72,99 @@ bool sum_span_bytes(
 
 } // namespace
 
+bool llama_moe_pool_copy_spans_validate(
+        uint64_t source_size_bytes,
+        uint64_t destination_size_bytes,
+        const std::vector<llama_moe_pool_copy_span> & spans,
+        std::string & error) {
+    if (destination_size_bytes == 0) {
+        if (!spans.empty()) {
+            error = "zero-sized compact tensor must not contain copy spans";
+            return false;
+        }
+        error.clear();
+        return true;
+    }
+    if (source_size_bytes == 0 || spans.empty()) {
+        error = "non-empty compact tensor requires a source tensor and copy spans";
+        return false;
+    }
+
+    struct interval {
+        uint64_t begin;
+        uint64_t end;
+    };
+
+    std::vector<interval> source_intervals;
+    std::vector<interval> destination_intervals;
+    source_intervals.reserve(spans.size());
+    destination_intervals.reserve(spans.size());
+
+    uint64_t total_bytes = 0;
+    for (const auto & span : spans) {
+        if (span.size_bytes == 0) {
+            error = "copy span size is zero";
+            return false;
+        }
+
+        uint64_t source_end = 0;
+        uint64_t destination_end = 0;
+        if (!checked_add(span.source_offset_bytes, span.size_bytes, source_end) ||
+            source_end > source_size_bytes) {
+            error = "copy span is outside the packed source tensor";
+            return false;
+        }
+        if (!checked_add(span.destination_offset_bytes, span.size_bytes, destination_end) ||
+            destination_end > destination_size_bytes) {
+            error = "copy span is outside the compact destination tensor";
+            return false;
+        }
+        if (!checked_add(total_bytes, span.size_bytes, total_bytes)) {
+            error = "copy span byte count overflow";
+            return false;
+        }
+
+        source_intervals.push_back({span.source_offset_bytes, source_end});
+        destination_intervals.push_back({span.destination_offset_bytes, destination_end});
+    }
+
+    if (total_bytes != destination_size_bytes) {
+        error = "copy spans do not contain exactly the compact destination byte count";
+        return false;
+    }
+
+    auto by_begin = [](const interval & lhs, const interval & rhs) {
+        return lhs.begin < rhs.begin || (lhs.begin == rhs.begin && lhs.end < rhs.end);
+    };
+    std::sort(source_intervals.begin(), source_intervals.end(), by_begin);
+    std::sort(destination_intervals.begin(), destination_intervals.end(), by_begin);
+
+    for (size_t i = 1; i < source_intervals.size(); ++i) {
+        if (source_intervals[i].begin < source_intervals[i - 1].end) {
+            error = "copy spans overlap in the packed source tensor";
+            return false;
+        }
+    }
+
+    uint64_t destination_cursor = 0;
+    for (const auto & current : destination_intervals) {
+        if (current.begin != destination_cursor) {
+            error = current.begin < destination_cursor ?
+                "copy spans overlap in the compact destination tensor" :
+                "copy spans leave a gap in the compact destination tensor";
+            return false;
+        }
+        destination_cursor = current.end;
+    }
+    if (destination_cursor != destination_size_bytes) {
+        error = "copy spans do not cover the end of the compact destination tensor";
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
 bool llama_moe_compact_tensor_pool_plan_build(
         const llama_moe_packed_tensor_layout & source,
         const llama_moe_load_layer_placement & placement,
@@ -168,6 +261,13 @@ bool llama_moe_compact_tensor_pool_plan_build(
 
     if (!validate_destination_coverage(cpu_local_seen, "CPU", error) ||
         !validate_destination_coverage(gpu_local_seen, "GPU", error)) {
+        return false;
+    }
+
+    if (!llama_moe_pool_copy_spans_validate(
+            source.size_bytes, built.cpu_bytes, built.cpu_spans, error) ||
+        !llama_moe_pool_copy_spans_validate(
+            source.size_bytes, built.gpu_bytes, built.gpu_spans, error)) {
         return false;
     }
 

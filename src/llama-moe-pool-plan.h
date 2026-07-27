@@ -27,6 +27,15 @@ struct llama_moe_pool_copy_span {
 // Describes two exclusive compact destinations for one packed routed-expert
 // source tensor. A backend with zero experts has no destination tensor and its
 // ne[2] is zero; callers must skip allocation for that backend.
+// Validates a set of source-to-destination byte ranges. Destination ranges
+// must cover the compact tensor exactly once; source ranges must stay within
+// the packed tensor and may not overlap.
+bool llama_moe_pool_copy_spans_validate(
+    uint64_t source_size_bytes,
+    uint64_t destination_size_bytes,
+    const std::vector<llama_moe_pool_copy_span> & spans,
+    std::string & error);
+
 struct llama_moe_compact_tensor_pool_plan {
     int32_t layer = -1;
     std::string source_name;

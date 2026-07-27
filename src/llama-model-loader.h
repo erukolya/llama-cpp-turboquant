@@ -6,6 +6,7 @@
 #include "llama-arch.h"
 #include "llama-hparams.h"
 #include "llama-mmap.h"
+#include "llama-moe-pool-plan.h"
 
 #include "ggml-cpp.h"
 
@@ -192,6 +193,14 @@ struct llama_model_loader {
 
     // for backwards compatibility, does not support ggml-backend
     void load_data_for(struct ggml_tensor * cur) const;
+
+    // Loads selected byte ranges from one packed GGUF tensor into an already
+    // allocated compact destination tensor. The packed source tensor itself
+    // does not need a runtime allocation.
+    void load_tensor_slices(
+            struct ggml_tensor * destination,
+            const std::string & source_name,
+            const std::vector<llama_moe_pool_copy_span> & spans);
 
     // Returns false if cancelled by progress_callback
     bool load_all_data(
