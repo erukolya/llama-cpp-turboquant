@@ -15,6 +15,7 @@
 #include <map>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 using llama_buf_map = std::unordered_map<uint32_t, ggml_backend_buffer_t>;
 
@@ -89,6 +90,7 @@ struct llama_model_loader {
 
     std::map<std::string, llama_tensor_weight, weight_name_comparer> weights_map;
     std::unordered_map<std::string, llama_model_kv_override> kv_overrides;
+    std::unordered_set<std::string> slice_source_names;
     const llama_model_tensor_buft_override * tensor_buft_overrides;
 
     gguf_context_ptr metadata_ptr;
@@ -178,6 +180,26 @@ struct llama_model_loader {
     struct ggml_tensor * require_tensor_meta(const std::string & name) const;
 
     const struct ggml_tensor * check_tensor_dims(const std::string & name, const std::vector<int64_t> & ne, bool required) const;
+
+    // Claims a GGUF tensor as a selective slice source without creating it in
+    // a standard model context. Its bytes remain in size_data so model-load
+    // progress and direct GGUF/mmap slice reads still account for the complete
+    // source tensor. Each source may be claimed exactly once.
+    const struct ggml_tensor * claim_tensor_for_slices(
+            const std::string & name,
+            const std::vector<int64_t> & ne,
+            bool required = true) {
+        const struct ggml_tensor * tensor = check_tensor_dims(name, ne, required);
+        if (tensor == nullptr) {
+            return nullptr;
+        }
+        if (!slice_source_names.insert(name).second) {
+            throw std::runtime_error(format("%s: tensor '%s' was already claimed as a slice source",
+                __func__, name.c_str()));
+        }
+        ++n_created;
+        return tensor;
+    }
 
     struct ggml_tensor * create_tensor(
         const llama_hparams & hparams, const buft_list_t * buft_list_cpu, const buft_list_t * buft_list_input, const buft_list_t * buft_list_output,
