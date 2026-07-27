@@ -25,4 +25,15 @@ if(BUILD_TESTING)
     target_compile_features(${LOAD_SCOPE_TEST_TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${LOAD_SCOPE_TEST_TARGET} COMMAND $<TARGET_FILE:${LOAD_SCOPE_TEST_TARGET}>)
     set_property(TEST ${LOAD_SCOPE_TEST_TARGET} PROPERTY LABELS main)
+
+    set(POOL_PLAN_TEST_TARGET test-moe-pool-plan)
+    add_executable(
+        ${POOL_PLAN_TEST_TARGET}
+        ../../tests/test-moe-pool-plan.cpp
+        ../../src/llama-moe-placement.cpp
+        ../../src/llama-moe-pool-plan.cpp)
+    target_include_directories(${POOL_PLAN_TEST_TARGET} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_compile_features(${POOL_PLAN_TEST_TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${POOL_PLAN_TEST_TARGET} COMMAND $<TARGET_FILE:${POOL_PLAN_TEST_TARGET}>)
+    set_property(TEST ${POOL_PLAN_TEST_TARGET} PROPERTY LABELS main)
 endif()
