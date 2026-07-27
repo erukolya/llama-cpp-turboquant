@@ -37,7 +37,8 @@ struct server_context_profiled : server_context {
             g_server_moe_placement->capture(model);
         }
 
-        if (g_server_moe_plan && !g_server_moe_plan->validate(model)) {
+        if (g_server_moe_plan && g_server_moe_plan->dry_run() &&
+            !g_server_moe_plan->validate(model)) {
             return false;
         }
 
@@ -120,7 +121,7 @@ static bool common_params_parse_with_moe_stats(
             std::fprintf(stderr,
                 "moe_plan: warning: load placement is unavailable: %s; continuing dry-run validation only\n",
                 placement_error.c_str());
-        } else {
+        } else if (!plan_options.dry_run) {
             g_server_moe_load_placement = std::move(load_placement);
         }
 
@@ -129,7 +130,8 @@ static bool common_params_parse_with_moe_stats(
             g_server_moe_plan->plan_path().c_str(),
             g_server_moe_plan->strict() ? "true" : "false",
             g_server_moe_plan->dry_run() ? "true" : "false",
-            g_server_moe_load_placement ? "ready" : "disabled");
+            g_server_moe_load_placement ? "ready" :
+                (plan_options.dry_run ? "dry-run-disabled" : "disabled"));
     }
 
     return true;

@@ -1,5 +1,10 @@
 #include "models.h"
 #include "llama-memory-recurrent.h"
+#include "llama-moe-registry.h"
+
+#include "ggml-cpu.h"
+
+#include <vector>
 
 void llama_model_qwen35moe::load_arch_hparams(llama_model_loader & ml) {
     ml.get_key(LLM_KV_EXPERT_FEED_FORWARD_LENGTH,        hparams.n_ff_exp, false);
@@ -42,6 +47,66 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
 
     const bool mtp_only = (hparams.n_layer_nextn > 0) && (ml.get_weight("blk.0.attn_norm.weight") == nullptr);
     const int trunk_flags = mtp_only ? TENSOR_NOT_REQUIRED : 0;
+
+    const auto * static_placement = moe_placement();
+    llama_moe_compact_registry compact_registry;
+    std::vector<ggml_tensor *> compact_cpu_slots;
+    std::vector<ggml_tensor *> compact_gpu_slots;
+    ggml_backend_dev_t compact_gpu_device = nullptr;
+
+    if (static_placement != nullptr) {
+        if (mtp_only) {
+            throw std::runtime_error("static MoE placement is not supported for an MTP-only model");
+        }
+        if (ml.use_mmap) {
+            throw std::runtime_error(
+                "static MoE compact loading currently requires --no-mmap while V1.2 lifecycle integration is active");
+        }
+        if (ml.use_direct_io) {
+            throw std::runtime_error(
+                "static MoE compact loading currently does not support direct I/O");
+        }
+
+        for (const auto & device : devices) {
+            if (device.is_meta || device.dev == nullptr ||
+                ggml_backend_dev_type(device.dev) != GGML_BACKEND_DEVICE_TYPE_GPU) {
+                continue;
+            }
+            if (compact_gpu_device != nullptr) {
+                throw std::runtime_error(
+                    "static MoE compact loading V1.2 supports exactly one GPU device");
+            }
+            compact_gpu_device = device.dev;
+        }
+        if (compact_gpu_device == nullptr) {
+            throw std::runtime_error(
+                "static MoE compact loading requires one dedicated GPU device");
+        }
+
+        compact_cpu_slots.reserve(static_cast<size_t>(n_layer) * 3);
+        compact_gpu_slots.reserve(static_cast<size_t>(n_layer) * 3);
+    }
+
+    auto register_compact_source = [&](int il, const ggml_tensor * source) {
+        if (static_placement == nullptr || source == nullptr) {
+            throw std::runtime_error("invalid compact MoE source registration");
+        }
+        const auto * layer_placement = static_placement->find_layer(il);
+        if (layer_placement == nullptr) {
+            throw std::runtime_error(
+                "static MoE placement has no mapping for layer " + std::to_string(il));
+        }
+
+        compact_cpu_slots.push_back(nullptr);
+        compact_gpu_slots.push_back(nullptr);
+        std::string compact_error;
+        if (!compact_registry.add(
+                source, il, *layer_placement,
+                &compact_cpu_slots.back(), &compact_gpu_slots.back(), compact_error)) {
+            throw std::runtime_error(
+                "cannot register compact routed tensor '" + std::string(source->name) + "': " + compact_error);
+        }
+    };
 
     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, 0);
 
@@ -95,9 +160,34 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
         }
 
         // Routed experts
-        layer.ffn_gate_inp  = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP,  "weight", il), { n_embd, n_expert }, flags);
-        layer.ffn_down_exps = create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", il), { n_ff_exp, n_embd, n_expert }, flags);
-        create_tensor_gate_up_exps(layer, il, n_embd, n_ff_exp, n_expert, flags);
+        layer.ffn_gate_inp = create_tensor(
+            tn(LLM_TENSOR_FFN_GATE_INP, "weight", il), { n_embd, n_expert }, flags);
+
+        if (static_placement == nullptr) {
+            layer.ffn_down_exps = create_tensor(
+                tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", il),
+                { n_ff_exp, n_embd, n_expert }, flags);
+            create_tensor_gate_up_exps(layer, il, n_embd, n_ff_exp, n_expert, flags);
+        } else {
+            const auto down_name = tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", il).str();
+            const ggml_tensor * down_source = ml.claim_tensor_for_slices(
+                down_name, std::vector<int64_t>{ n_ff_exp, n_embd, n_expert });
+            register_compact_source(il, down_source);
+
+            const auto gate_up_name = tn(LLM_TENSOR_FFN_GATE_UP_EXPS, "weight", il).str();
+            const ggml_tensor * gate_up_source = ml.claim_tensor_for_slices(
+                gate_up_name, std::vector<int64_t>{ n_embd, n_ff_exp * 2, n_expert }, false);
+            if (gate_up_source != nullptr) {
+                register_compact_source(il, gate_up_source);
+            } else {
+                const auto gate_name = tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", il).str();
+                const auto up_name = tn(LLM_TENSOR_FFN_UP_EXPS, "weight", il).str();
+                register_compact_source(il, ml.claim_tensor_for_slices(
+                    gate_name, std::vector<int64_t>{ n_embd, n_ff_exp, n_expert }));
+                register_compact_source(il, ml.claim_tensor_for_slices(
+                    up_name, std::vector<int64_t>{ n_embd, n_ff_exp, n_expert }));
+            }
+        }
 
         // Shared experts
         layer.ffn_gate_inp_shexp = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP_SHEXP, "weight", il), { n_embd }, flags);
@@ -146,6 +236,58 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
     }
     for (int i = n_layer; i < n_layer_all; ++i) {
         load_block_mtp(i);
+    }
+
+    if (static_placement != nullptr) {
+        if (compact_registry.empty()) {
+            throw std::runtime_error("static MoE placement produced no compact routed tensors");
+        }
+
+        std::string compact_error;
+        if (!compact_registry.create_storages(
+                ggml_backend_cpu_buffer_type(),
+                ggml_backend_dev_buffer_type(compact_gpu_device),
+                moe_cpu_storage(), moe_gpu_storage(), compact_error)) {
+            throw std::runtime_error("cannot allocate compact routed-expert pools: " + compact_error);
+        }
+
+        const size_t previous_size_data = ml.size_data;
+        if (ml.size_data == 0) {
+            ml.size_data = ml.n_bytes;
+        }
+        try {
+            for (const auto & binding : compact_registry.bindings()) {
+                if (!binding.cpu_name.empty()) {
+                    if (binding.cpu_slot == nullptr || *binding.cpu_slot == nullptr) {
+                        throw std::runtime_error(
+                            "compact CPU destination is missing for '" + binding.source_name + "'");
+                    }
+                    ml.load_tensor_slices(
+                        *binding.cpu_slot, binding.source_name, binding.pool_plan.cpu_spans);
+                }
+                if (!binding.gpu_name.empty()) {
+                    if (binding.gpu_slot == nullptr || *binding.gpu_slot == nullptr) {
+                        throw std::runtime_error(
+                            "compact GPU destination is missing for '" + binding.source_name + "'");
+                    }
+                    ml.load_tensor_slices(
+                        *binding.gpu_slot, binding.source_name, binding.pool_plan.gpu_spans);
+                }
+            }
+        } catch (...) {
+            ml.size_data = previous_size_data;
+            throw;
+        }
+        ml.size_data = previous_size_data;
+
+        LLAMA_LOG_INFO(
+            "%s: compact routed experts loaded: tensors=%zu, CPU=%.2f MiB logical / %.2f MiB allocated, "
+            "GPU=%.2f MiB logical / %.2f MiB allocated, packed runtime bytes=0\n",
+            __func__, compact_registry.binding_count(),
+            moe_cpu_storage().logical_tensor_bytes() / 1024.0 / 1024.0,
+            moe_cpu_storage().allocated_buffer_bytes() / 1024.0 / 1024.0,
+            moe_gpu_storage().logical_tensor_bytes() / 1024.0 / 1024.0,
+            moe_gpu_storage().allocated_buffer_bytes() / 1024.0 / 1024.0);
     }
 }
 
