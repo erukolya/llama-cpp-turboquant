@@ -92,4 +92,23 @@ if(BUILD_TESTING)
     target_compile_features(${STORAGE_TEST_TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${STORAGE_TEST_TARGET} COMMAND $<TARGET_FILE:${STORAGE_TEST_TARGET}>)
     set_property(TEST ${STORAGE_TEST_TARGET} PROPERTY LABELS main)
+
+    set(REGISTRY_TEST_TARGET test-moe-registry)
+    add_executable(
+        ${REGISTRY_TEST_TARGET}
+        ../../tests/test-moe-registry.cpp
+        ../../src/llama-moe-placement.cpp
+        ../../src/llama-moe-pool-plan.cpp
+        ../../src/llama-moe-storage.cpp
+        ../../src/llama-moe-registry.cpp)
+    target_include_directories(
+        ${REGISTRY_TEST_TARGET}
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/ggml/include)
+    target_link_libraries(${REGISTRY_TEST_TARGET} PRIVATE ggml)
+    target_compile_features(${REGISTRY_TEST_TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${REGISTRY_TEST_TARGET} COMMAND $<TARGET_FILE:${REGISTRY_TEST_TARGET}>)
+    set_property(TEST ${REGISTRY_TEST_TARGET} PROPERTY LABELS main)
 endif()
