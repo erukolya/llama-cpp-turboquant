@@ -17,6 +17,8 @@
 struct llama_cparams;
 struct llama_ubatch;
 struct llama_model_loader;
+struct llama_moe_load_placement_snapshot;
+class llama_moe_compact_storage;
 
 // available models
 enum llm_type {
@@ -706,6 +708,10 @@ struct llama_model_base : public llama_model {
     // helper: try merged gate_up_exps first, fall back to separate gate and up
     void create_tensor_gate_up_exps(llama_layer & layer, int bid, int64_t n_embd_,
                 int64_t n_ff_, int64_t n_expert_, int flags);
+
+    const llama_moe_load_placement_snapshot * moe_placement() const noexcept;
+    llama_moe_compact_storage & moe_cpu_storage() noexcept;
+    llama_moe_compact_storage & moe_gpu_storage() noexcept;
 
     // helper: try to load merged qkv first, fall back to separate q, k, v
     void create_tensor_qkv(llama_layer & layer, int bid,

@@ -149,6 +149,52 @@ bool llama_moe_load_placement_snapshot_build(
     return true;
 }
 
+bool llama_moe_load_placement_snapshot_validate_dimensions(
+        const llama_moe_load_placement_snapshot & snapshot,
+        uint32_t expected_layer_count,
+        uint32_t expected_experts_per_layer,
+        std::string & error) {
+    if (expected_layer_count == 0 || expected_experts_per_layer == 0) {
+        error = "expected model placement dimensions must be non-zero";
+        return false;
+    }
+    if (snapshot.layers.size() != expected_layer_count) {
+        error = "placement layer count differs from the model";
+        return false;
+    }
+    if (expected_layer_count > std::numeric_limits<uint32_t>::max() / expected_experts_per_layer ||
+        snapshot.logical_expert_count != expected_layer_count * expected_experts_per_layer) {
+        error = "placement logical expert count differs from the model";
+        return false;
+    }
+
+    uint32_t cpu_total = 0;
+    uint32_t gpu_total = 0;
+    for (uint32_t layer_index = 0; layer_index < expected_layer_count; ++layer_index) {
+        const auto & layer = snapshot.layers[layer_index];
+        if (layer.layer != static_cast<int32_t>(layer_index) ||
+            layer.expert_count != expected_experts_per_layer ||
+            layer.global_to_local.size() != expected_experts_per_layer) {
+            error = "placement layer dimensions differ from the model";
+            return false;
+        }
+        if (layer.cpu_expert_count + layer.gpu_expert_count != expected_experts_per_layer) {
+            error = "placement layer backend totals differ from the model";
+            return false;
+        }
+        cpu_total += layer.cpu_expert_count;
+        gpu_total += layer.gpu_expert_count;
+    }
+    if (cpu_total != snapshot.cpu_expert_count || gpu_total != snapshot.gpu_expert_count ||
+        cpu_total + gpu_total != snapshot.logical_expert_count) {
+        error = "placement snapshot backend totals are inconsistent";
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
 llama_moe_load_placement_scope::llama_moe_load_placement_scope(
         const llama_moe_load_placement_snapshot * snapshot) noexcept :
     previous_(g_current_moe_load_placement) {

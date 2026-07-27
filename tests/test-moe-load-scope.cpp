@@ -54,6 +54,14 @@ int main() {
     require(outer.gpu_expert_count == 4, "GPU expert count mismatch");
     require(outer.cpu_expert_count == 4, "CPU expert count mismatch");
 
+    std::string dimension_error;
+    require(llama_moe_load_placement_snapshot_validate_dimensions(outer, 2, 4, dimension_error),
+        dimension_error.c_str());
+    require(!llama_moe_load_placement_snapshot_validate_dimensions(outer, 3, 4, dimension_error),
+        "wrong layer count must be rejected");
+    require(!llama_moe_load_placement_snapshot_validate_dimensions(outer, 2, 5, dimension_error),
+        "wrong expert count must be rejected");
+
     // Prove the snapshot is independent from the source view and userdata.
     outer_state.gpu_cutoff = 0;
     llama_moe_load_location location;

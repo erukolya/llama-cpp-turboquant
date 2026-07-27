@@ -61,6 +61,12 @@ LLAMA_API bool llama_moe_load_placement_snapshot_build(
     llama_moe_load_placement_snapshot & snapshot,
     std::string & error);
 
+bool llama_moe_load_placement_snapshot_validate_dimensions(
+    const llama_moe_load_placement_snapshot & snapshot,
+    uint32_t expected_layer_count,
+    uint32_t expected_experts_per_layer,
+    std::string & error);
+
 // Makes an immutable placement snapshot visible only on the current
 // model-loading thread. Nested scopes restore the previous snapshot.
 class llama_moe_load_placement_scope {
