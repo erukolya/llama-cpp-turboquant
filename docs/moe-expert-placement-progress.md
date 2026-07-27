@@ -31,7 +31,7 @@ Active work:
 
 **Current status: USER NOT NEEDED.**
 
-The next user action is **U2**, only after compact CPU/CUDA pools are implemented and a ready Windows CUDA artifact exists.
+The next user action is **U2**, only after the dedicated Windows CUDA 13.3 validator artifact has finished building successfully.
 
 Planned hardware checkpoints:
 
@@ -55,7 +55,7 @@ Planned hardware checkpoints:
 
 **Current phase:** V1.2 exclusive split storage and selective loading.
 
-**Current decision:** exact source metadata, immutable placement, compact pool planning and source-only GGUF tensor claims are validated. The active step is wiring these contracts into Qwen3.5 MoE model-owned CPU/CUDA storages without ever creating the original persistent packed routed tensors.
+**Current decision:** Qwen3.5/3.6 MoE can now claim the packed routed tensors as GGUF slice sources, allocate compact model-owned CPU and CUDA pools, and load quantized expert slices without creating the original persistent packed runtime tensors. A model-only U2 validator verifies exact planned/actual bytes, zero packed routed pointers, model unload, RAM totals and VRAM totals. Ordinary server inference with compact pools is explicitly blocked until V1.3 implements the mixed CPU/CUDA graph.
 
 Confirmed baseline:
 
@@ -123,9 +123,9 @@ Q4 adds 862 hot experts, improves estimated GPU coverage by 6.806 percentage poi
 
 ## V1.2 — Exclusive split storage and selective loading
 
-**Status:** active.
+**Status:** active; implementation complete enough for U2, hardware validation pending.
 
-- [~] Design ownership and lifecycle of CPU/GPU expert pools.
+- [x] Design ownership and lifecycle of CPU/GPU expert pools.
 - [x] Locate Qwen3.5 MoE packed tensor creation in `src/models/qwen35moe.cpp`.
 - [x] Confirm one `build_moe_ffn` graph path.
 - [x] Identify pre-allocation model-loading integration point.
@@ -137,16 +137,20 @@ Q4 adds 862 hot experts, improves estimated GPU coverage by 6.806 percentage poi
 - [x] Convert real GGUF `ggml_tensor` metadata into exact compact source layouts.
 - [x] Claim packed GGUF tensors as slice sources without standard runtime allocation.
 - [x] Validate all-CPU, all-GPU and mixed compact-pool plans.
-- [ ] Create compact CPU routed-expert pools.
-- [ ] Create compact CUDA routed-expert pools.
-- [ ] Support separate and merged gate-up tensors in model loading.
-- [~] Copy quantized slices without dequantization; loader path implemented, model integration pending.
-- [~] Validate quant-block and backend alignment; exact strides validated, backend gate pending.
-- [~] Read slices directly from GGUF/mmap/staging; loader path implemented, lifecycle integration pending.
-- [ ] Avoid allocating the original persistent packed routed tensors in Qwen3.5 MoE.
-- [ ] Prove no complete RAM expert bank remains.
-- [ ] Add all-CPU, all-GPU and mixed loading tests.
-- [ ] Add exact RAM/VRAM accounting.
+- [x] Create compact CPU routed-expert pools.
+- [x] Create compact CUDA routed-expert pools.
+- [x] Support separate and merged gate-up tensors in model loading.
+- [x] Copy quantized slices without dequantization.
+- [~] Validate quant-block and backend alignment; exact metadata and static CUDA build passed, real KAT load is U2.
+- [x] Read slices directly from GGUF with `--no-mmap`; mmap and direct-I/O compact loading remain explicitly blocked.
+- [x] Avoid allocating the original persistent packed routed tensors in Qwen3.5 MoE.
+- [~] Prove no complete RAM expert bank remains; structural validator is ready, real process memory is U2.
+- [~] Add all-CPU, all-GPU and mixed loading tests; pool tests pass, real mixed KAT load is U2.
+- [x] Add exact planned/actual CPU/GPU logical and allocated byte accounting.
+- [x] Add model-only load/unload validator and Windows PowerShell result package.
+- [x] Build the model-only validator on Windows and Ubuntu.
+- [x] Block ordinary compact-pool server inference until V1.3.
+- [!] Build the final Windows CUDA 13.3 U2 artifact.
 - [!] Run U2 on the primary machine.
 
 **V1.2 exit gate:** compact pools load and unload correctly, permanent CPU+VRAM routed-expert bytes approximately equal the original routed bank, and no full RAM duplicate remains.
@@ -225,7 +229,13 @@ Do not implement on the current branch:
 - Added compact tensor pool planning with exact CPU/GPU shapes, bytes and coalesced source-copy spans.
 - Added exact adapters from real `ggml_tensor` metadata into compact source layouts.
 - Added a loader contract that claims packed tensors as selective slice sources without adding them to standard model buffers.
-- Added registry support and tests for constructing compact pools directly from real tensor metadata.
+- Added model-owned compact CPU and CUDA storage with correct buffer-before-context teardown.
+- Added direct quantized GGUF slice loading for Qwen3.5/3.6 MoE separate and merged gate-up layouts.
+- Removed persistent packed routed tensor allocation from the compact model-load path.
+- Added `llama-moe-load-check` with exact byte accounting, zero-packed-pointer verification and load/unload markers.
+- Added `run-u2.ps1` with RAM, VRAM, stdout/stderr and machine-readable result collection.
+- Built the U2 validator successfully on Windows and Ubuntu.
+- Blocked ordinary server inference with compact pools until the mixed execution graph exists in V1.3.
 - Added mixed, all-GPU, invalid-size, invalid-axis and duplicate-destination tests.
 
 ## 2026-07-27
