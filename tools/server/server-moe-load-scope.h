@@ -14,19 +14,36 @@ public:
         if (!common_moe_expert_plan_load(plan_path, plan, error)) {
             return false;
         }
-        if (!common_moe_expert_placement_build(plan, placement_, error)) {
+
+        common_moe_expert_placement placement;
+        if (!common_moe_expert_placement_build(plan, placement, error)) {
+            return false;
+        }
+        if (placement.layers.empty()) {
+            error = "placement contains no layers";
             return false;
         }
 
-        view_.layer_count = static_cast<uint32_t>(placement_.layers.size());
-        view_.logical_expert_count = placement_.logical_expert_count;
-        view_.query = query;
-        view_.userdata = &placement_;
-        return true;
+        const uint32_t experts_per_layer = placement.layers.front().expert_count;
+        for (const auto & layer : placement.layers) {
+            if (layer.expert_count != experts_per_layer) {
+                error = "model-load placement requires a uniform expert count per layer";
+                return false;
+            }
+        }
+
+        llama_moe_load_placement_view view;
+        view.layer_count = static_cast<uint32_t>(placement.layers.size());
+        view.experts_per_layer = experts_per_layer;
+        view.logical_expert_count = placement.logical_expert_count;
+        view.query = query;
+        view.userdata = &placement;
+
+        return llama_moe_load_placement_snapshot_build(view, snapshot_, error);
     }
 
-    const llama_moe_load_placement_view * view() const noexcept {
-        return view_.query == nullptr ? nullptr : &view_;
+    const llama_moe_load_placement_snapshot * view() const noexcept {
+        return snapshot_.empty() ? nullptr : &snapshot_;
     }
 
 private:
@@ -51,6 +68,5 @@ private:
         return true;
     }
 
-    common_moe_expert_placement placement_;
-    llama_moe_load_placement_view view_;
+    llama_moe_load_placement_snapshot snapshot_;
 };
