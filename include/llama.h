@@ -1541,6 +1541,19 @@ extern "C" {
         int32_t n_sample;   // number of sampled tokens
     };
 
+    // Cumulative scheduler copies of selected host-resident MoE weight slices to an accelerator.
+    // Activation/result transfers and full-tensor copies are not included.
+    struct llama_moe_copy_stats_data {
+        uint64_t weight_copy_bytes;    // actual transfer bytes, including backend padding
+        uint64_t weight_payload_bytes; // selected expert weight bytes, excluding padding
+        uint64_t expert_slices;        // expert slices copied across packed weight tensors
+        uint64_t copy_calls;           // grouped backend copy submissions
+        uint64_t weight_inputs;        // packed MoE weight inputs handled by selective copying
+    };
+
+    LLAMA_API struct llama_moe_copy_stats_data llama_moe_copy_stats      (const struct llama_context * ctx);
+    LLAMA_API void                             llama_moe_copy_stats_reset(      struct llama_context * ctx);
+
     LLAMA_API struct llama_perf_context_data llama_perf_context      (const struct llama_context * ctx);
     LLAMA_API void                           llama_perf_context_print(const struct llama_context * ctx);
     LLAMA_API void                           llama_perf_context_reset(      struct llama_context * ctx);

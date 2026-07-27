@@ -117,7 +117,7 @@ These values are routing-selection coverage, not expected tokens/s improvement.
 - [x] Confirm operation offload can override CPU residency.
 - [x] Confirm selected expert slices are copied RAM -> CUDA.
 - [x] Confirm tensor views cannot provide independent residency.
-- [~] Add scheduler counters for selective MoE weight-copy bytes; execution-backend instrumentation remains pending.
+- [~] Add scheduler counters and public `llama_context` API for selective MoE weight-copy bytes; execution-backend instrumentation remains pending.
 
 ## V1.1 — Offline planner
 
@@ -315,6 +315,7 @@ Every implementation commit that starts, completes, or blocks a tracked item upd
 
 ## 2026-07-27
 
+- Exposed selective MoE weight-copy counters through the public context API and performance report; awaiting CI.
 - Added cumulative scheduler counters for selective MoE weight-copy bytes, payload bytes, expert slices, copy calls, and packed weight inputs; awaiting CI.
 - Created the Version 1 tracker and removed adaptive Version 2 from active scope.
 - Completed profiling, execution-path analysis, offline planner, and initial C++ plan contract.

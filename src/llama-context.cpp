@@ -4083,6 +4083,28 @@ int32_t llama_decode(
 // perf
 //
 
+llama_moe_copy_stats_data llama_moe_copy_stats(const llama_context * ctx) {
+    llama_moe_copy_stats_data data = {};
+
+    if (ctx == nullptr || ctx->get_sched() == nullptr) {
+        return data;
+    }
+
+    const auto stats = ggml_backend_sched_get_moe_copy_stats(ctx->get_sched());
+    data.weight_copy_bytes    = stats.weight_copy_bytes;
+    data.weight_payload_bytes = stats.weight_payload_bytes;
+    data.expert_slices        = stats.expert_slices;
+    data.copy_calls           = stats.copy_calls;
+    data.weight_inputs        = stats.weight_inputs;
+    return data;
+}
+
+void llama_moe_copy_stats_reset(llama_context * ctx) {
+    if (ctx != nullptr && ctx->get_sched() != nullptr) {
+        ggml_backend_sched_reset_moe_copy_stats(ctx->get_sched());
+    }
+}
+
 llama_perf_context_data llama_perf_context(const llama_context * ctx) {
     llama_perf_context_data data = {};
 
@@ -4107,10 +4129,15 @@ void llama_perf_context_print(const llama_context * ctx) {
             __func__, data.t_eval_ms, data.n_eval, data.t_eval_ms / data.n_eval, 1e3 / data.t_eval_ms * data.n_eval);
     LLAMA_LOG_INFO("%s:       total time = %10.2f ms / %5d tokens\n", __func__, (t_end_ms - data.t_start_ms), (data.n_p_eval + data.n_eval));
     LLAMA_LOG_INFO("%s:    graphs reused = %10d\n", __func__, data.n_reused);
+
+    const auto moe = llama_moe_copy_stats(ctx);
+    LLAMA_LOG_INFO("%s: MoE weight copies = %10" PRIu64 " bytes (%" PRIu64 " payload, %" PRIu64 " slices, %" PRIu64 " calls, %" PRIu64 " inputs)\n",
+            __func__, moe.weight_copy_bytes, moe.weight_payload_bytes, moe.expert_slices, moe.copy_calls, moe.weight_inputs);
 }
 
 void llama_perf_context_reset(llama_context * ctx) {
     ctx->perf_reset();
+    llama_moe_copy_stats_reset(ctx);
 }
 
 //
