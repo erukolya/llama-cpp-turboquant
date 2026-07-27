@@ -20,11 +20,51 @@ on:
       - 'tests/test-moe-*.cpp'
       - 'tools/moe-plan/**'
 
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
+  apply-v12-loader:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[apply-v12-loader]')
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: agent/static-moe-expert-placement
+
+      - name: Apply source patch
+        run: python3 tools/moe-plan/apply-v12-qwen-loader-patch.py
+
+      - name: Validate patch shape
+        run: git diff --check
+
+      - name: Build server
+        run: |
+          cmake -S . -B build-agent -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLLAMA_CURL=OFF \
+            -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_TESTS=OFF
+          cmake --build build-agent --parallel 2 --target llama-server
+
+      - name: Commit validated patch
+        run: |
+          rm tools/moe-plan/apply-v12-qwen-loader-patch.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/models/qwen35moe.cpp tools/server/server.cpp \
+            tools/moe-plan/apply-v12-qwen-loader-patch.py
+          git commit -m "moe: load Qwen3.5 experts into exclusive compact pools"
+          git push origin HEAD:agent/static-moe-expert-placement
+
   moe-core:
     strategy:
       fail-fast: false
