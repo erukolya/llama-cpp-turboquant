@@ -1,0 +1,56 @@
+name: Apply MoE Model Ownership Patch
+
+on:
+  push:
+    branches:
+      - agent/static-moe-expert-placement
+    paths:
+      - '.github/workflows/moe-apply-model-owner.yml'
+      - '.github/patches/moe-model-owner.patch'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: agent/static-moe-expert-placement
+
+      - name: Apply verified patch
+        run: |
+          git apply --check .github/patches/moe-model-owner.patch
+          git apply .github/patches/moe-model-owner.patch
+
+      - name: Fast MoE tests
+        run: |
+          cmake -S . -B build-fast \
+            -DBUILD_SHARED_LIBS=ON \
+            -DLLAMA_BUILD_SERVER=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_TOOLS=ON \
+            -DLLAMA_BUILD_TESTS=ON \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-fast --parallel 2 --target \
+            test-moe-load-scope \
+            test-moe-load-shared \
+            test-moe-pool-plan \
+            test-moe-storage
+          ctest --test-dir build-fast --output-on-failure \
+            -R '^test-moe-(load-scope|load-shared|pool-plan|storage)$'
+
+      - name: Compile llama target
+        run: cmake --build build-fast --parallel 2 --target llama
+
+      - name: Commit model ownership
+        run: |
+          rm -f .github/patches/moe-model-owner.patch
+          rm -f .github/workflows/moe-apply-model-owner.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'Own static MoE placement in the model'
+          git push origin HEAD:agent/static-moe-expert-placement
