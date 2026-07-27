@@ -35,6 +35,7 @@ add_library(llama
             llama-model.cpp
             llama-moe-placement.cpp
             llama-moe-placement.h
+            llama-moe-pool-layout.cpp
             llama-moe-pool-plan.cpp
             llama-moe-pool-plan.h
             llama-moe-registry.cpp
