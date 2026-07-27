@@ -1,5 +1,7 @@
 #include "llama-moe-pool-plan.h"
 
+#include "ggml.h"
+
 #include <stdexcept>
 #include <string>
 
@@ -39,11 +41,41 @@ static llama_moe_packed_tensor_layout make_source() {
 }
 
 int main() {
+    ggml_tensor tensor_meta = {};
+    tensor_meta.type = GGML_TYPE_F32;
+    tensor_meta.ne[0] = 8;
+    tensor_meta.ne[1] = 4;
+    tensor_meta.ne[2] = 8;
+    tensor_meta.ne[3] = 1;
+    tensor_meta.nb[0] = sizeof(float);
+    tensor_meta.nb[1] = 8 * sizeof(float);
+    tensor_meta.nb[2] = 8 * 4 * sizeof(float);
+    tensor_meta.nb[3] = 8 * 4 * 8 * sizeof(float);
+    ggml_set_name(&tensor_meta, "blk.3.ffn_gate_exps.weight");
+
+    llama_moe_packed_tensor_layout metadata_layout;
+    std::string error;
+    require(llama_moe_packed_tensor_layout_from_tensor(3, &tensor_meta, metadata_layout, error),
+        error.c_str());
+    require(metadata_layout.layer == 3, "metadata layout layer mismatch");
+    require(metadata_layout.name == tensor_meta.name, "metadata layout name mismatch");
+    require(metadata_layout.ne[2] == 8, "metadata layout expert dimension mismatch");
+    require(metadata_layout.nb[2] == tensor_meta.nb[2], "metadata layout expert stride mismatch");
+    require(metadata_layout.size_bytes == ggml_nbytes(&tensor_meta), "metadata layout byte size mismatch");
+    require(!llama_moe_packed_tensor_layout_from_tensor(-1, &tensor_meta, metadata_layout, error),
+        "negative metadata layer must be rejected");
+    require(!llama_moe_packed_tensor_layout_from_tensor(3, nullptr, metadata_layout, error),
+        "null tensor metadata must be rejected");
+
+    ggml_tensor zero_stride_meta = tensor_meta;
+    zero_stride_meta.nb[2] = 0;
+    require(!llama_moe_packed_tensor_layout_from_tensor(3, &zero_stride_meta, metadata_layout, error),
+        "zero tensor metadata stride must be rejected");
+
     const auto placement = make_placement();
     const auto source = make_source();
 
     llama_moe_compact_tensor_pool_plan plan;
-    std::string error;
     require(llama_moe_compact_tensor_pool_plan_build(source, placement, plan, error), error.c_str());
 
     require(plan.cpu_expert_count == 4 && plan.gpu_expert_count == 4, "compact counts mismatch");
