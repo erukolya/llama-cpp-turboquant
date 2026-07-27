@@ -2,14 +2,15 @@ name: MoE U2 CUDA
 
 on:
   workflow_dispatch:
-  pull_request:
-    types: [synchronize]
+  push:
+    branches:
+      - agent/static-moe-expert-placement
     paths:
       - '.github/workflows/moe-u2-cuda.yml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CMAKE_ARGS: >-
