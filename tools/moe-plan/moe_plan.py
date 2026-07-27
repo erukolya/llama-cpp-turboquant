@@ -87,6 +87,14 @@ class ExpertCandidate:
         return self.hits / self.size_bytes if self.size_bytes else 0.0
 
 
+def canonical_ggml_type_name(enum_name: str) -> str:
+    """Convert gguf-py enum names to the strings returned by ggml_type_name()."""
+    value = enum_name.lower()
+    if re.fullmatch(r"q[2-8]_k", value):
+        return value[:-1] + "K"
+    return value
+
+
 def _required(row: dict[str, str], name: str, source: Path, line: int) -> str:
     value = row.get(name)
     if value is None or value == "":
@@ -280,7 +288,7 @@ def read_model_placement(path: Path) -> tuple[list[PlacementTensor], str]:
         if len(shape_values) != 4:
             raise PlanError(f"{path}: tensor {tensor.name!r} has more than four dimensions")
         ne = tuple(shape_values)
-        type_name = tensor.tensor_type.name
+        type_name = canonical_ggml_type_name(tensor.tensor_type.name)
 
         match = ROUTED_TENSOR_RE.match(tensor.name)
         if match is None:
