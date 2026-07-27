@@ -33,6 +33,8 @@ add_library(llama
             llama-model-loader.cpp
             llama-model-saver.cpp
             llama-model.cpp
+            llama-moe-placement.cpp
+            llama-moe-placement.h
             llama-quant.cpp
             llama-sampler.cpp
             llama-vocab.cpp
@@ -57,5 +59,5 @@ target_link_libraries(llama PUBLIC ggml)
 if (BUILD_SHARED_LIBS)
     set_target_properties(llama PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_definitions(llama PRIVATE LLAMA_BUILD)
-    target_compile_definitions(llama PUBLIC  LLAMA_SHARED)
+    target_compile_definitions(llama PUBLIC LLAMA_SHARED)
 endif()

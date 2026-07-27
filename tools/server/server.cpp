@@ -6,6 +6,7 @@
 
 #include "arg.h"
 #include "common.h"
+#include "server-moe-load-scope.h"
 #include "server-moe-placement.h"
 #include "server-moe-plan-args.h"
 #include "server-moe-plan.h"
@@ -16,9 +17,15 @@
 static std::unique_ptr<server_moe_stats_collector> g_server_moe_stats;
 static std::unique_ptr<server_moe_placement_report> g_server_moe_placement;
 static std::unique_ptr<server_moe_plan_validator> g_server_moe_plan;
+static std::unique_ptr<server_moe_load_placement> g_server_moe_load_placement;
 
 struct server_context_profiled : server_context {
     bool load_model(common_params & params) {
+        // The placement is visible only during synchronous model loading. Model
+        // implementations must copy any data they need before this scope ends.
+        llama_moe_load_placement_scope placement_scope(
+            g_server_moe_load_placement ? g_server_moe_load_placement->view() : nullptr);
+
         if (!server_context::load_model(params)) {
             return false;
         }
@@ -102,11 +109,27 @@ static bool common_params_parse_with_moe_stats(
             params.model.path,
             plan_options.strict,
             plan_options.dry_run);
+
+        auto load_placement = std::make_unique<server_moe_load_placement>();
+        std::string placement_error;
+        if (!load_placement->prepare(plan_options.plan_path, placement_error)) {
+            if (plan_options.strict || !plan_options.dry_run) {
+                std::fprintf(stderr, "error: cannot prepare MoE load placement: %s\n", placement_error.c_str());
+                return false;
+            }
+            std::fprintf(stderr,
+                "moe_plan: warning: load placement is unavailable: %s; continuing dry-run validation only\n",
+                placement_error.c_str());
+        } else {
+            g_server_moe_load_placement = std::move(load_placement);
+        }
+
         std::fprintf(stderr,
-            "moe_plan: enabled, input '%s', strict=%s, dry_run=%s\n",
+            "moe_plan: enabled, input '%s', strict=%s, dry_run=%s, load_scope=%s\n",
             g_server_moe_plan->plan_path().c_str(),
             g_server_moe_plan->strict() ? "true" : "false",
-            g_server_moe_plan->dry_run() ? "true" : "false");
+            g_server_moe_plan->dry_run() ? "true" : "false",
+            g_server_moe_load_placement ? "ready" : "disabled");
     }
 
     return true;
