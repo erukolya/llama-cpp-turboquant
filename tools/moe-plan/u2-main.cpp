@@ -3,6 +3,7 @@
 #include "ggml-backend.h"
 #include "llama-model.h"
 #include "llama-moe-placement.h"
+#include "llama-moe-storage.h"
 #include "llama.h"
 
 #include <cerrno>
