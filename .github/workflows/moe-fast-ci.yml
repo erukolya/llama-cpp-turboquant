@@ -1,0 +1,81 @@
+name: MoE Fast CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/moe-fast-ci.yml'
+      - 'src/llama-moe-*.h'
+      - 'src/llama-moe-*.cpp'
+      - 'tests/test-moe-*.cpp'
+      - 'tools/moe-plan/**'
+  push:
+    branches:
+      - agent/static-moe-expert-placement
+    paths:
+      - '.github/workflows/moe-fast-ci.yml'
+      - 'src/llama-moe-*.h'
+      - 'src/llama-moe-*.cpp'
+      - 'tests/test-moe-*.cpp'
+      - 'tools/moe-plan/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  moe-core:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: ubuntu
+          - os: windows-2025
+            name: windows
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Configure Ubuntu
+        if: runner.os == 'Linux'
+        run: >-
+          cmake -S . -B build
+          -DBUILD_SHARED_LIBS=ON
+          -DLLAMA_BUILD_SERVER=OFF
+          -DLLAMA_BUILD_EXAMPLES=OFF
+          -DLLAMA_BUILD_TOOLS=ON
+          -DLLAMA_BUILD_TESTS=ON
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: >-
+          cmake -S . -B build -G "Ninja Multi-Config"
+          -DCMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake
+          -DBUILD_SHARED_LIBS=ON
+          -DLLAMA_BUILD_SERVER=OFF
+          -DLLAMA_BUILD_EXAMPLES=OFF
+          -DLLAMA_BUILD_TOOLS=ON
+          -DLLAMA_BUILD_TESTS=ON
+
+      - name: Build MoE targets
+        shell: bash
+        run: >-
+          cmake --build build --config Release --parallel
+          --target
+          test-moe-load-scope
+          test-moe-load-shared
+          test-moe-pool-plan
+
+      - name: Run MoE tests
+        shell: bash
+        run: >-
+          ctest --test-dir build -C Release --output-on-failure
+          -R '^test-moe-(load-scope|load-shared|pool-plan)$'
