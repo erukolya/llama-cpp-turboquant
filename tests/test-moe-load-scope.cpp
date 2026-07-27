@@ -54,6 +54,10 @@ int main() {
     require(outer.gpu_expert_count == 4, "GPU expert count mismatch");
     require(outer.cpu_expert_count == 4, "CPU expert count mismatch");
 
+#ifndef LLAMA_MOE_SHARED_API_TEST
+    // This validator is intentionally internal to the llama core. Keep its
+    // coverage in the direct source-linked unit test, but do not require it to
+    // be exported by the Windows shared-library API smoke test.
     std::string dimension_error;
     require(llama_moe_load_placement_snapshot_validate_dimensions(outer, 2, 4, dimension_error),
         dimension_error.c_str());
@@ -61,6 +65,7 @@ int main() {
         "wrong layer count must be rejected");
     require(!llama_moe_load_placement_snapshot_validate_dimensions(outer, 2, 5, dimension_error),
         "wrong expert count must be rejected");
+#endif
 
     // Prove the snapshot is independent from the source view and userdata.
     outer_state.gpu_cutoff = 0;
