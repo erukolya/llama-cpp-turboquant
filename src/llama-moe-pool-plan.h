@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+struct ggml_tensor;
+
 struct llama_moe_packed_tensor_layout {
     int32_t layer = -1;
     std::string name;
@@ -14,6 +16,14 @@ struct llama_moe_packed_tensor_layout {
     std::array<uint64_t, 4> nb = {0, 0, 0, 0};
     uint64_t size_bytes = 0;
 };
+
+// Converts actual GGUF tensor metadata into the exact source layout used by
+// compact-pool planning. This does not allocate or retain a runtime tensor.
+bool llama_moe_packed_tensor_layout_from_tensor(
+    int32_t layer,
+    const ggml_tensor * tensor,
+    llama_moe_packed_tensor_layout & layout,
+    std::string & error);
 
 struct llama_moe_pool_copy_span {
     uint32_t global_expert_first = 0;
