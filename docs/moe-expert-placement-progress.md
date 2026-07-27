@@ -55,7 +55,7 @@ Planned hardware checkpoints:
 
 **Current phase:** V1.2 exclusive split storage and selective loading.
 
-**Current decision:** the exact model-layout gate is closed; implementation may proceed to loader integration and compact pools.
+**Current decision:** immutable placement ownership and compact tensor copy planning are implemented; actual allocation remains gated by automated C++ validation.
 
 Confirmed baseline:
 
@@ -130,8 +130,11 @@ Q4 adds 862 hot experts, improves estimated GPU coverage by 6.806 percentage poi
 - [x] Confirm one `build_moe_ffn` graph path.
 - [x] Identify pre-allocation model-loading integration point.
 - [x] Identify runtime tensors without source weights as the compact-pool extension point.
-- [~] Add deterministic per-layer global-to-local CPU/GPU location tables; committed, CI pending.
-- [ ] Move validated placement access to the model-loading boundary.
+- [x] Add deterministic per-layer global-to-local CPU/GPU location tables.
+- [x] Move validated placement access to the model-loading boundary.
+- [x] Deep-copy immutable placement before the server load scope ends.
+- [x] Plan compact CPU/GPU tensor shapes, exact bytes and coalesced copy spans.
+- [x] Validate all-CPU, all-GPU and mixed compact-pool plans.
 - [ ] Create compact CPU routed-expert pools.
 - [ ] Create compact CUDA routed-expert pools.
 - [ ] Support separate and merged gate-up tensors.
@@ -212,6 +215,13 @@ Do not implement on the current branch:
 - NVMe tier.
 
 # Change log
+
+## 2026-07-28
+
+- Added immutable deep-copy placement snapshots at the model-loading boundary.
+- Fixed the internal load-scope test so Windows shared-library builds do not require private symbol exports.
+- Added compact tensor pool planning with exact CPU/GPU shapes, bytes and coalesced source-copy spans.
+- Added mixed, all-GPU, invalid-size, invalid-axis and duplicate-destination tests.
 
 ## 2026-07-27
 
