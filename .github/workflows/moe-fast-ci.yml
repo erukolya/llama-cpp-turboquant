@@ -73,9 +73,10 @@ jobs:
           test-moe-load-scope
           test-moe-load-shared
           test-moe-pool-plan
+          test-moe-storage
 
       - name: Run MoE tests
         shell: bash
         run: >-
           ctest --test-dir build -C Release --output-on-failure
-          -R '^test-moe-(load-scope|load-shared|pool-plan)$'
+          -R '^test-moe-(load-scope|load-shared|pool-plan|storage)$'

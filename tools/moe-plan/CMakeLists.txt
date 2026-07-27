@@ -76,4 +76,20 @@ if(BUILD_TESTING)
     target_compile_features(${POOL_PLAN_TEST_TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${POOL_PLAN_TEST_TARGET} COMMAND $<TARGET_FILE:${POOL_PLAN_TEST_TARGET}>)
     set_property(TEST ${POOL_PLAN_TEST_TARGET} PROPERTY LABELS main)
+
+    set(STORAGE_TEST_TARGET test-moe-storage)
+    add_executable(
+        ${STORAGE_TEST_TARGET}
+        ../../tests/test-moe-storage.cpp
+        ../../src/llama-moe-storage.cpp)
+    target_include_directories(
+        ${STORAGE_TEST_TARGET}
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/ggml/include)
+    target_link_libraries(${STORAGE_TEST_TARGET} PRIVATE ggml)
+    target_compile_features(${STORAGE_TEST_TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${STORAGE_TEST_TARGET} COMMAND $<TARGET_FILE:${STORAGE_TEST_TARGET}>)
+    set_property(TEST ${STORAGE_TEST_TARGET} PROPERTY LABELS main)
 endif()
