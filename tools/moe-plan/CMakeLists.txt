@@ -104,8 +104,10 @@ if(BUILD_TESTING)
         ${REGISTRY_TEST_TARGET}
         ../../tests/test-moe-registry.cpp
         ../../src/llama-moe-placement.cpp
+        ../../src/llama-moe-pool-layout.cpp
         ../../src/llama-moe-pool-plan.cpp
         ../../src/llama-moe-storage.cpp
+        ../../src/llama-moe-registry-meta.cpp
         ../../src/llama-moe-registry.cpp)
     target_include_directories(
         ${REGISTRY_TEST_TARGET}
