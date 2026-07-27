@@ -1,1 +1,216 @@
-placeholder
+diff --git a/docs/moe-expert-placement-progress.md b/docs/moe-expert-placement-progress.md
+index da2b032..f4e4ba8 100644
+--- a/docs/moe-expert-placement-progress.md
++++ b/docs/moe-expert-placement-progress.md
+@@ -117,7 +117,7 @@ These values are routing-selection coverage, not expected tokens/s improvement.
+ - [x] Confirm operation offload can override CPU residency.
+ - [x] Confirm selected expert slices are copied RAM -> CUDA.
+ - [x] Confirm tensor views cannot provide independent residency.
+-- [~] Add scheduler counters and public `llama_context` API for selective MoE weight-copy bytes; execution-backend instrumentation remains pending.
++- [~] Add scheduler/public API counters for selective MoE weight copies and CPU/accelerator `MUL_MAT_ID` execution; awaiting CI.
+ 
+ ## V1.1 — Offline planner
+ 
+@@ -315,6 +315,7 @@ Every implementation commit that starts, completes, or blocks a tracked item upd
+ 
+ ## 2026-07-27
+ 
++- Added CPU-versus-accelerator `MUL_MAT_ID` execution counters for MoE verification; awaiting CI.
+ - Exposed selective MoE weight-copy counters through the public context API and performance report; awaiting CI.
+ - Added cumulative scheduler counters for selective MoE weight-copy bytes, payload bytes, expert slices, copy calls, and packed weight inputs; awaiting CI.
+ - Created the Version 1 tracker and removed adaptive Version 2 from active scope.
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+index de8302e..d48541a 100644
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -341,6 +341,15 @@ extern "C" {
+     GGML_API struct ggml_backend_sched_moe_copy_stats ggml_backend_sched_get_moe_copy_stats(ggml_backend_sched_t sched);
+     GGML_API void                                     ggml_backend_sched_reset_moe_copy_stats(ggml_backend_sched_t sched);
+ 
++    // Cumulative MUL_MAT_ID node executions by backend device class.
++    struct ggml_backend_sched_moe_exec_stats {
++        uint64_t cpu_ops;
++        uint64_t accelerator_ops;
++    };
++
++    GGML_API struct ggml_backend_sched_moe_exec_stats ggml_backend_sched_get_moe_exec_stats(ggml_backend_sched_t sched);
++    GGML_API void                                     ggml_backend_sched_reset_moe_exec_stats(ggml_backend_sched_t sched);
++
+     GGML_API ggml_backend_buffer_type_t ggml_backend_sched_get_buffer_type(ggml_backend_sched_t sched, ggml_backend_t backend);
+     GGML_API size_t                     ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
+ 
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 40a1df1..31298cc 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -819,6 +819,7 @@ struct ggml_backend_sched {
+     bool op_offload;
+ 
+     struct ggml_backend_sched_moe_copy_stats moe_copy_stats;
++    struct ggml_backend_sched_moe_exec_stats moe_exec_stats;
+ 
+     int debug;
+ 
+@@ -1548,6 +1549,21 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+     std::vector<int32_t> ids;
+     std::vector<ggml_bitset_t> used_ids;
+ 
++    auto record_moe_exec = [&](ggml_backend_t backend, const ggml_cgraph * graph) {
++        uint64_t count = 0;
++        for (int i = 0; i < graph->n_nodes; ++i) {
++            count += graph->nodes[i]->op == GGML_OP_MUL_MAT_ID;
++        }
++        if (count == 0) {
++            return;
++        }
++        if (ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_CPU) {
++            sched->moe_exec_stats.cpu_ops += count;
++        } else {
++            sched->moe_exec_stats.accelerator_ops += count;
++        }
++    };
++
+     for (int split_id = 0; split_id < sched->n_splits; split_id++) {
+         struct ggml_backend_sched_split * split = &splits[split_id];
+         int split_backend_id = split->backend_id;
+@@ -1686,6 +1702,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+         }
+ 
+         if (!sched->callback_eval) {
++            record_moe_exec(split_backend, &split->graph);
+             enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);
+             if (ec != GGML_STATUS_SUCCESS) {
+                 return ec;
+@@ -1708,6 +1725,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+ 
+                 struct ggml_cgraph gv = ggml_graph_view(&split->graph, j0, j1 + 1);
+ 
++                record_moe_exec(split_backend, &gv);
+                 enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &gv);
+                 if (ec != GGML_STATUS_SUCCESS) {
+                     return ec;
+@@ -1951,6 +1969,16 @@ void ggml_backend_sched_reset_moe_copy_stats(ggml_backend_sched_t sched) {
+     sched->moe_copy_stats = {};
+ }
+ 
++struct ggml_backend_sched_moe_exec_stats ggml_backend_sched_get_moe_exec_stats(ggml_backend_sched_t sched) {
++    GGML_ASSERT(sched);
++    return sched->moe_exec_stats;
++}
++
++void ggml_backend_sched_reset_moe_exec_stats(ggml_backend_sched_t sched) {
++    GGML_ASSERT(sched);
++    sched->moe_exec_stats = {};
++}
++
+ int ggml_backend_sched_get_n_backends(ggml_backend_sched_t sched) {
+     GGML_ASSERT(sched);
+     return sched->n_backends;
+diff --git a/include/llama.h b/include/llama.h
+index b69ffe1..7085a1b 100644
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -1554,6 +1554,14 @@ extern "C" {
+     LLAMA_API struct llama_moe_copy_stats_data llama_moe_copy_stats      (const struct llama_context * ctx);
+     LLAMA_API void                             llama_moe_copy_stats_reset(      struct llama_context * ctx);
+ 
++    struct llama_moe_exec_stats_data {
++        uint64_t cpu_ops;
++        uint64_t accelerator_ops;
++    };
++
++    LLAMA_API struct llama_moe_exec_stats_data llama_moe_exec_stats      (const struct llama_context * ctx);
++    LLAMA_API void                             llama_moe_exec_stats_reset(      struct llama_context * ctx);
++
+     LLAMA_API struct llama_perf_context_data llama_perf_context      (const struct llama_context * ctx);
+     LLAMA_API void                           llama_perf_context_print(const struct llama_context * ctx);
+     LLAMA_API void                           llama_perf_context_reset(      struct llama_context * ctx);
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 371b4ca..8d1b4eb 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -4105,6 +4105,25 @@ void llama_moe_copy_stats_reset(llama_context * ctx) {
+     }
+ }
+ 
++llama_moe_exec_stats_data llama_moe_exec_stats(const llama_context * ctx) {
++    llama_moe_exec_stats_data data = {};
++
++    if (ctx == nullptr || ctx->get_sched() == nullptr) {
++        return data;
++    }
++
++    const auto stats = ggml_backend_sched_get_moe_exec_stats(ctx->get_sched());
++    data.cpu_ops         = stats.cpu_ops;
++    data.accelerator_ops = stats.accelerator_ops;
++    return data;
++}
++
++void llama_moe_exec_stats_reset(llama_context * ctx) {
++    if (ctx != nullptr && ctx->get_sched() != nullptr) {
++        ggml_backend_sched_reset_moe_exec_stats(ctx->get_sched());
++    }
++}
++
+ llama_perf_context_data llama_perf_context(const llama_context * ctx) {
+     llama_perf_context_data data = {};
+ 
+@@ -4133,11 +4152,16 @@ void llama_perf_context_print(const llama_context * ctx) {
+     const auto moe = llama_moe_copy_stats(ctx);
+     LLAMA_LOG_INFO("%s: MoE weight copies = %10" PRIu64 " bytes (%" PRIu64 " payload, %" PRIu64 " slices, %" PRIu64 " calls, %" PRIu64 " inputs)\n",
+             __func__, moe.weight_copy_bytes, moe.weight_payload_bytes, moe.expert_slices, moe.copy_calls, moe.weight_inputs);
++
++    const auto moe_exec = llama_moe_exec_stats(ctx);
++    LLAMA_LOG_INFO("%s: MoE MUL_MAT_ID ops = %10" PRIu64 " CPU, %" PRIu64 " accelerator\n",
++            __func__, moe_exec.cpu_ops, moe_exec.accelerator_ops);
+ }
+ 
+ void llama_perf_context_reset(llama_context * ctx) {
+     ctx->perf_reset();
+     llama_moe_copy_stats_reset(ctx);
++    llama_moe_exec_stats_reset(ctx);
+ }
+ 
+ //
+diff --git a/tests/test-backend-sched-stats.cpp b/tests/test-backend-sched-stats.cpp
+index 73b8924..0657fd1 100644
+--- a/tests/test-backend-sched-stats.cpp
++++ b/tests/test-backend-sched-stats.cpp
+@@ -18,6 +18,11 @@ static void require_zero(const ggml_backend_sched_moe_copy_stats & stats) {
+     require(stats.weight_inputs == 0, "weight_inputs is not zero");
+ }
+ 
++static void require_zero(const ggml_backend_sched_moe_exec_stats & stats) {
++    require(stats.cpu_ops == 0, "cpu_ops is not zero");
++    require(stats.accelerator_ops == 0, "accelerator_ops is not zero");
++}
++
+ int main() {
+     ggml_backend_load_all();
+ 
+@@ -33,6 +38,10 @@ int main() {
+     ggml_backend_sched_reset_moe_copy_stats(sched);
+     require_zero(ggml_backend_sched_get_moe_copy_stats(sched));
+ 
++    require_zero(ggml_backend_sched_get_moe_exec_stats(sched));
++    ggml_backend_sched_reset_moe_exec_stats(sched);
++    require_zero(ggml_backend_sched_get_moe_exec_stats(sched));
++
+     ggml_backend_sched_free(sched);
+     ggml_backend_free(cpu);
+     return 0;
+diff --git a/tests/test-moe-copy-stats.cpp b/tests/test-moe-copy-stats.cpp
+index dceb791..fb19f07 100644
+--- a/tests/test-moe-copy-stats.cpp
++++ b/tests/test-moe-copy-stats.cpp
+@@ -18,5 +18,10 @@ int main() {
+     require(stats.copy_calls == 0, "null context returned non-zero copy_calls");
+     require(stats.weight_inputs == 0, "null context returned non-zero weight_inputs");
+     llama_moe_copy_stats_reset(nullptr);
++
++    const auto exec = llama_moe_exec_stats(nullptr);
++    require(exec.cpu_ops == 0, "null context returned non-zero CPU MoE ops");
++    require(exec.accelerator_ops == 0, "null context returned non-zero accelerator MoE ops");
++    llama_moe_exec_stats_reset(nullptr);
+     return 0;
+ }
