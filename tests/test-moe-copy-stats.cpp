@@ -18,5 +18,10 @@ int main() {
     require(stats.copy_calls == 0, "null context returned non-zero copy_calls");
     require(stats.weight_inputs == 0, "null context returned non-zero weight_inputs");
     llama_moe_copy_stats_reset(nullptr);
+
+    const auto exec = llama_moe_exec_stats(nullptr);
+    require(exec.cpu_ops == 0, "null context returned non-zero CPU MoE ops");
+    require(exec.accelerator_ops == 0, "null context returned non-zero accelerator MoE ops");
+    llama_moe_exec_stats_reset(nullptr);
     return 0;
 }

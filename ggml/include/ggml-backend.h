@@ -341,6 +341,15 @@ extern "C" {
     GGML_API struct ggml_backend_sched_moe_copy_stats ggml_backend_sched_get_moe_copy_stats(ggml_backend_sched_t sched);
     GGML_API void                                     ggml_backend_sched_reset_moe_copy_stats(ggml_backend_sched_t sched);
 
+    // Cumulative MUL_MAT_ID node executions by backend device class.
+    struct ggml_backend_sched_moe_exec_stats {
+        uint64_t cpu_ops;
+        uint64_t accelerator_ops;
+    };
+
+    GGML_API struct ggml_backend_sched_moe_exec_stats ggml_backend_sched_get_moe_exec_stats(ggml_backend_sched_t sched);
+    GGML_API void                                     ggml_backend_sched_reset_moe_exec_stats(ggml_backend_sched_t sched);
+
     GGML_API ggml_backend_buffer_type_t ggml_backend_sched_get_buffer_type(ggml_backend_sched_t sched, ggml_backend_t backend);
     GGML_API size_t                     ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
 

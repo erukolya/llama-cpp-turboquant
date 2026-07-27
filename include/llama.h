@@ -1554,6 +1554,14 @@ extern "C" {
     LLAMA_API struct llama_moe_copy_stats_data llama_moe_copy_stats      (const struct llama_context * ctx);
     LLAMA_API void                             llama_moe_copy_stats_reset(      struct llama_context * ctx);
 
+    struct llama_moe_exec_stats_data {
+        uint64_t cpu_ops;
+        uint64_t accelerator_ops;
+    };
+
+    LLAMA_API struct llama_moe_exec_stats_data llama_moe_exec_stats      (const struct llama_context * ctx);
+    LLAMA_API void                             llama_moe_exec_stats_reset(      struct llama_context * ctx);
+
     LLAMA_API struct llama_perf_context_data llama_perf_context      (const struct llama_context * ctx);
     LLAMA_API void                           llama_perf_context_print(const struct llama_context * ctx);
     LLAMA_API void                           llama_perf_context_reset(      struct llama_context * ctx);

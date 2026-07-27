@@ -4105,6 +4105,25 @@ void llama_moe_copy_stats_reset(llama_context * ctx) {
     }
 }
 
+llama_moe_exec_stats_data llama_moe_exec_stats(const llama_context * ctx) {
+    llama_moe_exec_stats_data data = {};
+
+    if (ctx == nullptr || ctx->get_sched() == nullptr) {
+        return data;
+    }
+
+    const auto stats = ggml_backend_sched_get_moe_exec_stats(ctx->get_sched());
+    data.cpu_ops         = stats.cpu_ops;
+    data.accelerator_ops = stats.accelerator_ops;
+    return data;
+}
+
+void llama_moe_exec_stats_reset(llama_context * ctx) {
+    if (ctx != nullptr && ctx->get_sched() != nullptr) {
+        ggml_backend_sched_reset_moe_exec_stats(ctx->get_sched());
+    }
+}
+
 llama_perf_context_data llama_perf_context(const llama_context * ctx) {
     llama_perf_context_data data = {};
 
@@ -4133,11 +4152,16 @@ void llama_perf_context_print(const llama_context * ctx) {
     const auto moe = llama_moe_copy_stats(ctx);
     LLAMA_LOG_INFO("%s: MoE weight copies = %10" PRIu64 " bytes (%" PRIu64 " payload, %" PRIu64 " slices, %" PRIu64 " calls, %" PRIu64 " inputs)\n",
             __func__, moe.weight_copy_bytes, moe.weight_payload_bytes, moe.expert_slices, moe.copy_calls, moe.weight_inputs);
+
+    const auto moe_exec = llama_moe_exec_stats(ctx);
+    LLAMA_LOG_INFO("%s: MoE MUL_MAT_ID ops = %10" PRIu64 " CPU, %" PRIu64 " accelerator\n",
+            __func__, moe_exec.cpu_ops, moe_exec.accelerator_ops);
 }
 
 void llama_perf_context_reset(llama_context * ctx) {
     ctx->perf_reset();
     llama_moe_copy_stats_reset(ctx);
+    llama_moe_exec_stats_reset(ctx);
 }
 
 //

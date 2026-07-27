@@ -18,6 +18,11 @@ static void require_zero(const ggml_backend_sched_moe_copy_stats & stats) {
     require(stats.weight_inputs == 0, "weight_inputs is not zero");
 }
 
+static void require_zero(const ggml_backend_sched_moe_exec_stats & stats) {
+    require(stats.cpu_ops == 0, "cpu_ops is not zero");
+    require(stats.accelerator_ops == 0, "accelerator_ops is not zero");
+}
+
 int main() {
     ggml_backend_load_all();
 
@@ -32,6 +37,10 @@ int main() {
     require_zero(ggml_backend_sched_get_moe_copy_stats(sched));
     ggml_backend_sched_reset_moe_copy_stats(sched);
     require_zero(ggml_backend_sched_get_moe_copy_stats(sched));
+
+    require_zero(ggml_backend_sched_get_moe_exec_stats(sched));
+    ggml_backend_sched_reset_moe_exec_stats(sched);
+    require_zero(ggml_backend_sched_get_moe_exec_stats(sched));
 
     ggml_backend_sched_free(sched);
     ggml_backend_free(cpu);
