@@ -761,6 +761,7 @@ struct server_metrics {
 
 struct server_context_impl {
     friend struct server_context;
+    friend struct server_routes;
 
 public:
     // only use these pointers outside of this class:
@@ -4387,6 +4388,9 @@ void server_routes::init_routes() {
         auto res_task = dynamic_cast<server_task_result_metrics*>(result.get());
         GGML_ASSERT(res_task != nullptr);
 
+        const auto moe_copy_stats = llama_moe_copy_stats(ctx_server.ctx_tgt);
+        const auto moe_exec_stats = llama_moe_exec_stats(ctx_server.ctx_tgt);
+
         // metrics definition: https://prometheus.io/docs/practices/naming/#metric-names
         json all_metrics_def = json {
             {"counter", {{
@@ -4413,6 +4417,34 @@ void server_routes::init_routes() {
                     {"name",  "n_tokens_max"},
                     {"help",  "Largest observed n_tokens."},
                     {"value",  res_task->n_tokens_max}
+            }, {
+                    {"name",  "moe_weight_copy_bytes_total"},
+                    {"help",  "Selective routed-expert weight bytes copied to an accelerator, including padding."},
+                    {"value",  moe_copy_stats.weight_copy_bytes}
+            }, {
+                    {"name",  "moe_weight_payload_bytes_total"},
+                    {"help",  "Selective routed-expert weight payload bytes copied to an accelerator."},
+                    {"value",  moe_copy_stats.weight_payload_bytes}
+            }, {
+                    {"name",  "moe_expert_slices_copied_total"},
+                    {"help",  "Logical routed-expert weight slices copied to an accelerator."},
+                    {"value",  moe_copy_stats.expert_slices}
+            }, {
+                    {"name",  "moe_weight_copy_calls_total"},
+                    {"help",  "Grouped selective routed-expert weight copy submissions."},
+                    {"value",  moe_copy_stats.copy_calls}
+            }, {
+                    {"name",  "moe_weight_inputs_total"},
+                    {"help",  "Packed routed-expert weight inputs handled by selective copying."},
+                    {"value",  moe_copy_stats.weight_inputs}
+            }, {
+                    {"name",  "moe_cpu_mul_mat_id_ops_total"},
+                    {"help",  "MUL_MAT_ID nodes executed on CPU backends."},
+                    {"value",  moe_exec_stats.cpu_ops}
+            }, {
+                    {"name",  "moe_accelerator_mul_mat_id_ops_total"},
+                    {"help",  "MUL_MAT_ID nodes executed on accelerator backends."},
+                    {"value",  moe_exec_stats.accelerator_ops}
             }}},
             {"gauge", {{
                     {"name",  "prompt_tokens_seconds"},
