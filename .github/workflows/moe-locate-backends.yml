@@ -1,0 +1,25 @@
+name: MoE Locate Backends
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/static-moe-expert-placement
+    paths:
+      - '.github/workflows/moe-locate-backends.yml'
+
+jobs:
+  locate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - name: Locate MUL_MAT_ID implementations
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== CPU/CUDA symbol locations ==='
+          grep -RInE 'ggml_compute_forward_mul_mat_id|forward_mul_mat_id|mul_mat_id' ggml/src/ggml-cpu ggml/src/ggml-cuda | head -n 400
+          echo '=== candidate CUDA files ==='
+          find ggml/src/ggml-cuda -maxdepth 2 -type f | sort | grep -Ei 'id|mat|mmq|mmv|moe' | head -n 200
