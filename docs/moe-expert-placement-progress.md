@@ -272,3 +272,13 @@ Do not implement on the current branch:
 - U3 PowerShell now captures the actual U2 process exit code instead of serializing `$null` as zero.
 - Corrected CUDA 13.3 / SM120 package is being built by this workflow.
 - **USER NOT NEEDED** until the corrected artifact is published.
+
+
+## U3 Q5 checker startup diagnosis (2026-07-28)
+
+- The MMVQ-corrected package failed before opening the model.
+- `llama-moe-load-check.exe` aborted in `ggml.cpp` because the static `std::terminate` hook was registered twice.
+- The registration is now idempotent: an already-installed identical handler is accepted without replacing its predecessor.
+- U3 child processes also set `GGML_NO_BACKTRACE=1` as a defensive workaround.
+- Windows CI now executes `llama-moe-load-check.exe --help` before packaging and rejects any checker that cannot start.
+- **USER NOT NEEDED** until the replacement package passes the startup smoke test and is published.

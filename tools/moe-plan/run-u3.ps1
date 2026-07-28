@@ -41,6 +41,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Avoid installing a process-global backtrace hook in validator/server child
+# processes. The binaries remain protected by the idempotent source fix too.
+$env:GGML_NO_BACKTRACE = "1"
+
 function Find-ExistingFile {
     param([string[]] $Candidates)
 
