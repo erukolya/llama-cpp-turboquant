@@ -34,6 +34,7 @@ jobs:
       - name: Apply corrected graph refactor
         shell: bash
         run: |
+          rm -f graph-refactor-error.txt
           if ! python3 - <<'PY' > graph-refactor-error.txt 2>&1
           from pathlib import Path
 
@@ -41,6 +42,9 @@ jobs:
           start = lines.index("          python3 - <<'PY'") + 1
           end = lines.index('          PY', start)
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines[start:end])
+          script = script.replace(
+              "raise SystemExit(f'{path}: expected one match, found {count}')",
+              "raise SystemExit(f'{path}: expected one match, found {count}; marker={old[:160]!r}')")
           script = script.replace(
               "needle = '''ggml_tensor * llm_graph_context::build_moe_ffn(\\n                   ggml_tensor * cur,\\n                   ggml_tensor * gate_inp,\\n                   ggml_tensor * gate_inp_b,",
               "needle = '''ggml_tensor * llm_graph_context::build_moe_ffn(\\n         ggml_tensor * cur,\\n         ggml_tensor * gate_inp,\\n         ggml_tensor * gate_inp_b,")
@@ -51,7 +55,7 @@ jobs:
             git config user.name github-actions[bot]
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
             git add graph-refactor-error.txt
-            git commit -m 'ci: capture graph refactor patch error'
+            git commit -m 'ci: capture detailed graph refactor error'
             git push origin HEAD:${{ github.event.pull_request.head.ref }}
             exit 1
           fi
@@ -79,6 +83,6 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src/llama-graph.h src/llama-graph.cpp
+          git add src/llama-graph.h src/llama-graph.cpp graph-refactor-error.txt
           git commit -m 'moe: separate routing from expert execution'
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
