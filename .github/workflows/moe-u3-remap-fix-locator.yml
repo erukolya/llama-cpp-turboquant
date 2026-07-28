@@ -19,17 +19,17 @@ jobs:
         with:
           ref: agent/static-moe-expert-placement
           fetch-depth: 0
-      - name: Record V3 build runs
+      - name: Record V4 build runs
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/moe-u3-remap-fix-build-v3.yml/runs?branch=agent%2Fstatic-moe-expert-placement&per_page=10" \
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/moe-u3-remap-fix-build-v4.yml/runs?branch=agent%2Fstatic-moe-expert-placement&per_page=10" \
             --jq '{runs: [.workflow_runs[] | {id, status, conclusion, head_sha, created_at, updated_at, html_url}]}' \
-            > .github/moe-u3-remap-fix-v3-runs.json
+            > .github/moe-u3-remap-fix-v4-runs.json
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/moe-u3-remap-fix-v3-runs.json
-          git commit -m 'ci: record MoE U3 remap fix V3 run'
+          git add .github/moe-u3-remap-fix-v4-runs.json
+          git commit -m 'ci: record MoE U3 remap fix V4 run'
           git pull --rebase origin agent/static-moe-expert-placement
           git push origin HEAD:agent/static-moe-expert-placement
