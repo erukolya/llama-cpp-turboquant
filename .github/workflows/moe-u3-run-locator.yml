@@ -1,0 +1,38 @@
+name: Locate MoE U3 Runs
+
+on:
+  push:
+    branches:
+      - agent/static-moe-expert-placement
+    paths:
+      - '.github/workflows/moe-u3-run-locator.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  locate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/static-moe-expert-placement
+          fetch-depth: 0
+
+      - name: Record U3 workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/moe-u3-cuda.yml/runs?branch=agent%2Fstatic-moe-expert-placement&per_page=20" \
+            --jq '{runs: [.workflow_runs[] | {id, run_number, status, conclusion, event, head_sha, created_at, run_started_at, html_url}]}' \
+            > .github/moe-u3-runs.json
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/moe-u3-runs.json
+          git commit -m 'ci: record MoE U3 workflow runs'
+          git pull --rebase origin agent/static-moe-expert-placement
+          git push origin HEAD:agent/static-moe-expert-placement
