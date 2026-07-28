@@ -1,0 +1,140 @@
+name: MoE U3 Remap Diagnostic V5
+
+on:
+  push:
+    branches:
+      - agent/static-moe-expert-placement
+    paths:
+      - '.github/workflows/moe-u3-remap-diagnostic-v5.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/static-moe-expert-placement
+          fetch-depth: 0
+
+      - name: Apply candidate contiguous-ID patch
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          qwen = Path('src/models/qwen35moe.cpp')
+          text = qwen.read_text(encoding='utf-8')
+          anchor = '        const auto remap_routing = [&](ggml_tensor * route_map, const char * name) {'
+          prefix = '''        ggml_tensor * global_ids = ggml_cont(ctx0, global_routing.selected_experts);
+              global_ids = ggml_reshape_1d(ctx0, global_ids, ggml_nelements(global_ids));
+              cb(global_ids, "ffn_moe_global_ids_cont", il);
+
+          '''
+          if anchor not in text:
+              raise SystemExit('anchor missing')
+          text = text.replace(anchor, prefix + anchor, 1)
+          pattern = re.compile(
+              r'\n\s*ggml_tensor \* global_ids = ggml_reshape_1d\(\s*ctx0,\s*'
+              r'global_routing\.selected_experts,\s*ggml_nelements\('
+              r'global_routing\.selected_experts\)\);\s*ggml_tensor \* local_ids = '
+              r'ggml_get_rows\(ctx0, route_map, global_ids\);')
+          text, count = pattern.subn(
+              '\n            ggml_tensor * local_ids = ggml_get_rows(ctx0, route_map, global_ids);',
+              text, count=1)
+          if count != 1:
+              raise SystemExit(f'qwen replacements={count}')
+          qwen.write_text(text, encoding='utf-8')
+
+          test = Path('tests/test-moe-route-remap.cpp')
+          text = test.read_text(encoding='utf-8')
+          function = r'''void test_route_remap(ggml_backend_t cpu) {
+              ggml_context * ctx = make_context();
+              constexpr int64_t n_expert = 6;
+              constexpr int64_t n_used = 4;
+              constexpr int64_t n_tokens = 2;
+              ggml_tensor * route_map = ggml_new_tensor_2d(ctx, GGML_TYPE_I32, 1, n_expert);
+              ggml_tensor * scores = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_expert, n_tokens);
+              ggml_set_input(route_map);
+              ggml_set_input(scores);
+              ggml_tensor * selected = ggml_argsort_top_k(ctx, scores, n_used);
+              std::fprintf(stderr, "selected contiguous before cont=%d ne=%lld,%lld,%lld,%lld nb=%zu,%zu,%zu,%zu\n",
+                  ggml_is_contiguous(selected),
+                  (long long) selected->ne[0], (long long) selected->ne[1],
+                  (long long) selected->ne[2], (long long) selected->ne[3],
+                  selected->nb[0], selected->nb[1], selected->nb[2], selected->nb[3]);
+              ggml_tensor * selected_cont = ggml_cont(ctx, selected);
+              std::fprintf(stderr, "selected contiguous after cont=%d\n", ggml_is_contiguous(selected_cont));
+              ggml_tensor * flat_ids = ggml_reshape_1d(ctx, selected_cont, ggml_nelements(selected_cont));
+              ggml_tensor * local_flat = ggml_get_rows(ctx, route_map, flat_ids);
+              ggml_tensor * local_ids = ggml_reshape_2d(ctx, local_flat, n_used, n_tokens);
+              ggml_set_output(selected);
+              ggml_set_output(local_ids);
+              ggml_cgraph * graph = ggml_new_graph(ctx);
+              ggml_build_forward_expand(graph, local_ids);
+              ggml_backend_sched_t sched = make_scheduler(cpu);
+              require(ggml_backend_sched_alloc_graph(sched, graph), "failed to allocate remap graph");
+              const std::array<int32_t, n_expert> map = { 0, -1, 1, -1, 2, -1 };
+              const std::array<float, n_expert * n_tokens> score_data = {
+                  6.0f, 5.0f, 3.0f, 2.0f, 1.0f, 4.0f,
+                  4.0f, 2.0f, 1.0f, 5.0f, 6.0f, 3.0f,
+              };
+              ggml_backend_tensor_set(route_map, map.data(), 0, sizeof(map));
+              ggml_backend_tensor_set(scores, score_data.data(), 0, sizeof(score_data));
+              require(ggml_backend_sched_graph_compute(sched, graph) == GGML_STATUS_SUCCESS,
+                  "remap graph computation failed");
+              ggml_backend_sched_synchronize(sched);
+              std::array<int32_t, n_used * n_tokens> selected_actual = {};
+              std::array<int32_t, n_used * n_tokens> local_actual = {};
+              ggml_backend_tensor_get(selected, selected_actual.data(), 0, sizeof(selected_actual));
+              ggml_backend_tensor_get(local_ids, local_actual.data(), 0, sizeof(local_actual));
+              for (size_t i = 0; i < selected_actual.size(); ++i) {
+                  std::fprintf(stderr, "slot=%zu global=%d local=%d\n", i, selected_actual[i], local_actual[i]);
+                  require(selected_actual[i] >= 0 && selected_actual[i] < n_expert,
+                      "argsort returned invalid ID");
+                  require(local_actual[i] == map[selected_actual[i]], "mapped ID mismatch");
+              }
+              ggml_backend_sched_free(sched);
+              ggml_free(ctx);
+          }
+
+          '''
+          text, count = re.subn(
+              r'void test_route_remap\(ggml_backend_t cpu\) \{.*?\n\}\n\n(?=void test_mul_mat_id_missing_slots)',
+              function, text, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit(f'test replacements={count}')
+          test.write_text(text, encoding='utf-8')
+
+      - name: Configure and build test
+        run: |
+          cmake -S . -B build-fast -G Ninja -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=ON -DLLAMA_BUILD_SERVER=OFF -DGGML_NATIVE=OFF
+          cmake --build build-fast -j 2 --target test-moe-route-remap
+
+      - name: Run test and capture exact output
+        id: run_test
+        shell: bash
+        run: |
+          set +e
+          ./build-fast/bin/test-moe-route-remap > .github/moe-u3-remap-v5-test.log 2>&1
+          rc=$?
+          cat .github/moe-u3-remap-v5-test.log
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Publish diagnostic
+        shell: bash
+        run: |
+          printf '\nexit_code=%s\n' '${{ steps.run_test.outputs.exit_code }}' >> .github/moe-u3-remap-v5-test.log
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/moe-u3-remap-v5-test.log
+          git commit -m 'ci: record exact MoE remap V5 test output'
+          git pull --rebase origin agent/static-moe-expert-placement
+          git push origin HEAD:agent/static-moe-expert-placement
+
+      - name: Enforce test success
+        if: steps.run_test.outputs.exit_code != '0'
+        run: exit 1
