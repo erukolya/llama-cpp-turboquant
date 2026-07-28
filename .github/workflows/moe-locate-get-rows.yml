@@ -24,15 +24,15 @@ jobs:
         run: |
           {
             echo '=== declarations and constructors ==='
-            (rg -n -C 8 'ggml_get_rows\(|GGML_OP_GET_ROWS' ggml/src ggml/include || true) | head -n 500
+            grep -RIn -E 'ggml_get_rows\(|GGML_OP_GET_ROWS' ggml/src ggml/include 2>/dev/null | head -n 500 || true
             echo '=== CPU forward implementations ==='
-            (rg -n -C 40 'compute_forward_get_rows|get_rows.*GGML_TYPE_I32|GGML_TYPE_I32.*get_rows' ggml/src/ggml-cpu || true) | head -n 800
+            grep -RIn -E 'compute_forward_get_rows|get_rows.*GGML_TYPE_I32|GGML_TYPE_I32.*get_rows' ggml/src/ggml-cpu 2>/dev/null | head -n 800 || true
             echo '=== CUDA implementations ==='
-            (rg -n -C 40 'GGML_OP_GET_ROWS|get_rows' ggml/src/ggml-cuda || true) | head -n 800
+            grep -RIn -E 'GGML_OP_GET_ROWS|get_rows' ggml/src/ggml-cuda 2>/dev/null | head -n 800 || true
           } > moe-get-rows-locations.txt
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add moe-get-rows-locations.txt
-          git commit -m 'ci: capture GET_ROWS type support'
+          git commit -m 'ci: capture GET_ROWS type support with grep'
           git push origin HEAD:agent/static-moe-expert-placement
