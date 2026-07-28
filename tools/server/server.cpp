@@ -22,7 +22,7 @@ static std::unique_ptr<server_moe_load_placement> g_server_moe_load_placement;
 struct server_context_profiled : server_context {
     bool load_model(common_params & params) {
         // The placement is visible only during synchronous model loading. Model
-        // implementations must copy any data they need before this scope ends.
+        // implementations copy the immutable placement and own all compact data.
         llama_moe_load_placement_scope placement_scope(
             g_server_moe_load_placement ? g_server_moe_load_placement->view() : nullptr);
 
@@ -37,6 +37,9 @@ struct server_context_profiled : server_context {
             g_server_moe_placement->capture(model);
         }
 
+        // Dry-run loads the ordinary packed model so the legacy validator can
+        // inspect its full routed tensor manifest. Runtime static placement is
+        // validated by the compact loader before backend allocation instead.
         if (g_server_moe_plan && g_server_moe_plan->dry_run() &&
             !g_server_moe_plan->validate(model)) {
             return false;
@@ -72,7 +75,7 @@ static bool common_params_parse_with_moe_stats(
 
     if (params.model.path.empty()) {
         std::fprintf(stderr,
-            "error: MoE profiling and static placement validation are not supported in router mode; "
+            "error: MoE profiling and static expert placement are not supported in router mode; "
             "start a single-model server\n");
         return false;
     }
@@ -105,38 +108,34 @@ static bool common_params_parse_with_moe_stats(
     }
 
     if (!plan_options.plan_path.empty()) {
-        if (!plan_options.dry_run) {
-            std::fprintf(stderr,
-                "error: static MoE compact loading is currently model-load-only in V1.2; "
-                "ordinary server inference is disabled until mixed CPU/CUDA execution is implemented in V1.3. "
-                "Use llama-moe-load-check for the U2 memory validation, or add --moe-expert-plan-dry-run.\n");
-            return false;
-        }
-
         g_server_moe_plan = std::make_unique<server_moe_plan_validator>(
             plan_options.plan_path,
             params.model.path,
             plan_options.strict,
             plan_options.dry_run);
 
-        // Dry-run validates the real model tensor manifest without replacing
-        // the runtime packed tensors or changing inference behavior.
-        auto load_placement = std::make_unique<server_moe_load_placement>();
-        std::string placement_error;
-        if (!load_placement->prepare(plan_options.plan_path, placement_error)) {
-            if (plan_options.strict) {
-                std::fprintf(stderr, "error: cannot prepare MoE load placement: %s\n", placement_error.c_str());
+        if (plan_options.dry_run) {
+            // Dry-run deliberately keeps the stock packed tensors and performs
+            // no compact allocation or inference-path changes.
+            g_server_moe_load_placement.reset();
+            std::fprintf(stderr,
+                "moe_plan: enabled, input '%s', strict=%s, dry_run=true, load_scope=disabled\n",
+                g_server_moe_plan->plan_path().c_str(),
+                g_server_moe_plan->strict() ? "true" : "false");
+        } else {
+            auto load_placement = std::make_unique<server_moe_load_placement>();
+            std::string placement_error;
+            if (!load_placement->prepare(plan_options.plan_path, placement_error)) {
+                std::fprintf(stderr, "error: cannot prepare static MoE placement: %s\n", placement_error.c_str());
                 return false;
             }
-            std::fprintf(stderr,
-                "moe_plan: warning: load placement is unavailable: %s; continuing dry-run validation only\n",
-                placement_error.c_str());
-        }
+            g_server_moe_load_placement = std::move(load_placement);
 
-        std::fprintf(stderr,
-            "moe_plan: enabled, input '%s', strict=%s, dry_run=true, load_scope=dry-run-disabled\n",
-            g_server_moe_plan->plan_path().c_str(),
-            g_server_moe_plan->strict() ? "true" : "false");
+            std::fprintf(stderr,
+                "moe_plan: enabled, input '%s', strict=%s, dry_run=false, load_scope=enabled\n",
+                g_server_moe_plan->plan_path().c_str(),
+                g_server_moe_plan->strict() ? "true" : "false");
+        }
     }
 
     return true;
