@@ -154,4 +154,17 @@ if(BUILD_TESTING)
     target_compile_features(${ROUTE_PARTITION_TEST_TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${ROUTE_PARTITION_TEST_TARGET} COMMAND $<TARGET_FILE:${ROUTE_PARTITION_TEST_TARGET}>)
     set_property(TEST ${ROUTE_PARTITION_TEST_TARGET} PROPERTY LABELS main)
+
+    set(ROUTE_REMAP_TEST_TARGET test-moe-route-remap)
+    add_executable(
+        ${ROUTE_REMAP_TEST_TARGET}
+        ../../tests/test-moe-route-remap.cpp)
+    target_include_directories(
+        ${ROUTE_REMAP_TEST_TARGET}
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/ggml/include)
+    target_link_libraries(${ROUTE_REMAP_TEST_TARGET} PRIVATE ggml)
+    target_compile_features(${ROUTE_REMAP_TEST_TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${ROUTE_REMAP_TEST_TARGET} COMMAND $<TARGET_FILE:${ROUTE_REMAP_TEST_TARGET}>)
+    set_property(TEST ${ROUTE_REMAP_TEST_TARGET} PROPERTY LABELS main)
 endif()
