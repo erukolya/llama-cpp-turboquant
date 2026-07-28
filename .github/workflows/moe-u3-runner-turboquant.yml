@@ -1,0 +1,98 @@
+name: Update MoE U3 Runner TurboQuant
+
+on:
+  push:
+    branches:
+      - agent/static-moe-expert-placement
+    paths:
+      - '.github/workflows/moe-u3-runner-turboquant.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/static-moe-expert-placement
+          fetch-depth: 0
+
+      - name: Add TurboQuant KV defaults and wrapper
+        shell: pwsh
+        run: |
+          $path = 'tools/moe-plan/run-u3.ps1'
+          $text = Get-Content $path -Raw -Encoding UTF8
+
+          $old = @'
+              [ValidateRange(512, 32768)]
+              [int] $CtxSize = 4096,
+
+              [int] $NGpuLayers = -1,
+          '@
+          $new = @'
+              [ValidateRange(512, 32768)]
+              [int] $CtxSize = 4096,
+
+              [ValidateSet("f16", "q8_0", "q4_0", "turbo2", "turbo3", "turbo4")]
+              [string] $CacheTypeK = "turbo4",
+
+              [ValidateSet("f16", "q8_0", "q4_0", "turbo2", "turbo3", "turbo4")]
+              [string] $CacheTypeV = "turbo3",
+
+              [int] $NGpuLayers = -1,
+          '@
+          if (($text.Split($old).Count - 1) -ne 1) { throw 'U3 parameter marker mismatch' }
+          $text = $text.Replace($old, $new)
+
+          $old = @'
+                  "--threads", $Threads.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+                  "--no-mmap",
+                  "--no-warmup",
+                  "--metrics"
+          '@
+          $new = @'
+                  "--threads", $Threads.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+                  "--cache-type-k", $CacheTypeK,
+                  "--cache-type-v", $CacheTypeV,
+                  "--flash-attn", "on",
+                  "--no-mmap",
+                  "--no-warmup",
+                  "--metrics"
+          '@
+          if (($text.Split($old).Count - 1) -ne 1) { throw 'U3 server argument marker mismatch' }
+          $text = $text.Replace($old, $new)
+
+          $old = @'
+                  ctx_size = $CtxSize
+                  n_gpu_layers = $NGpuLayers
+                  threads = $Threads
+          '@
+          $new = @'
+                  ctx_size = $CtxSize
+                  cache_type_k = $CacheTypeK
+                  cache_type_v = $CacheTypeV
+                  flash_attention = $true
+                  n_gpu_layers = $NGpuLayers
+                  threads = $Threads
+          '@
+          if (($text.Split($old).Count - 1) -ne 1) { throw 'U3 summary marker mismatch' }
+          $text = $text.Replace($old, $new)
+
+          Set-Content $path $text -Encoding UTF8
+          $null = [scriptblock]::Create((Get-Content $path -Raw -Encoding UTF8))
+
+          @'
+          @echo off
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-moe-u3.ps1" %*
+          exit /b %ERRORLEVEL%
+          '@ | Set-Content 'tools/moe-plan/run-u3.cmd' -Encoding ASCII
+
+          git rm -f '.github/workflows/moe-u3-runner-turboquant.yml'
+          git add tools/moe-plan/run-u3.ps1 tools/moe-plan/run-u3.cmd
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'moe: validate TurboQuant KV in U3 runner'
+          git pull --rebase origin agent/static-moe-expert-placement
+          git push origin HEAD:agent/static-moe-expert-placement
