@@ -2,11 +2,15 @@
 #include "ggml-backend.h"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace {
+
+constexpr int32_t MOE_MISSING_ID_MAGIC = 0x4D4F4553;
 
 void require(bool condition, const char * message) {
     if (!condition) {
@@ -15,20 +19,26 @@ void require(bool condition, const char * message) {
     }
 }
 
-} // namespace
-
-int main() {
-    ggml_backend_load_all();
-
-    ggml_backend_t cpu = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
-    require(cpu != nullptr, "failed to initialize CPU backend");
-
+ggml_context * make_context() {
     ggml_init_params params = {};
-    params.mem_size = 32 * ggml_tensor_overhead() + ggml_graph_overhead();
+    params.mem_size = 64 * ggml_tensor_overhead() + ggml_graph_overhead();
     params.no_alloc = true;
 
     ggml_context * ctx = ggml_init(params);
     require(ctx != nullptr, "failed to create ggml context");
+    return ctx;
+}
+
+ggml_backend_sched_t make_scheduler(ggml_backend_t cpu) {
+    ggml_backend_t backends[] = { cpu };
+    ggml_backend_sched_t sched = ggml_backend_sched_new(
+        backends, nullptr, 1, GGML_DEFAULT_GRAPH_SIZE, false, true);
+    require(sched != nullptr, "failed to create backend scheduler");
+    return sched;
+}
+
+void test_route_remap(ggml_backend_t cpu) {
+    ggml_context * ctx = make_context();
 
     constexpr int64_t n_expert = 6;
     constexpr int64_t n_used   = 4;
@@ -47,11 +57,8 @@ int main() {
     ggml_cgraph * graph = ggml_new_graph(ctx);
     ggml_build_forward_expand(graph, local_ids);
 
-    ggml_backend_t backends[] = { cpu };
-    ggml_backend_sched_t sched = ggml_backend_sched_new(
-        backends, nullptr, 1, GGML_DEFAULT_GRAPH_SIZE, false, true);
-    require(sched != nullptr, "failed to create backend scheduler");
-    require(ggml_backend_sched_alloc_graph(sched, graph), "failed to allocate graph");
+    ggml_backend_sched_t sched = make_scheduler(cpu);
+    require(ggml_backend_sched_alloc_graph(sched, graph), "failed to allocate remap graph");
 
     const std::array<int32_t, n_expert> map = { 0, -1, 1, -1, 2, -1 };
     const std::array<int32_t, n_used * n_tokens> selected = {
@@ -68,7 +75,7 @@ int main() {
 
     require(
         ggml_backend_sched_graph_compute(sched, graph) == GGML_STATUS_SUCCESS,
-        "graph computation failed");
+        "remap graph computation failed");
     ggml_backend_sched_synchronize(sched);
 
     std::array<int32_t, n_used * n_tokens> actual = {};
@@ -76,7 +83,83 @@ int main() {
     require(actual == expected, "backend remap differs from expected slot-preserving mapping");
 
     ggml_backend_sched_free(sched);
-    ggml_backend_free(cpu);
     ggml_free(ctx);
+}
+
+void test_mul_mat_id_missing_slots(ggml_backend_t cpu) {
+    ggml_context * ctx = make_context();
+
+    constexpr int64_t n_embd   = 2;
+    constexpr int64_t n_ff     = 1;
+    constexpr int64_t n_expert = 2;
+    constexpr int64_t n_used   = 2;
+    constexpr int64_t n_tokens = 2;
+
+    ggml_tensor * weights = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_embd, n_ff, n_expert);
+    ggml_tensor * input   = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_embd, 1, n_tokens);
+    ggml_tensor * ids     = ggml_new_tensor_2d(ctx, GGML_TYPE_I32, n_used, n_tokens);
+    ggml_set_input(weights);
+    ggml_set_input(input);
+    ggml_set_input(ids);
+
+    ggml_tensor * output = ggml_mul_mat_id(ctx, weights, input, ids);
+    std::memcpy(output->op_params, &MOE_MISSING_ID_MAGIC, sizeof(MOE_MISSING_ID_MAGIC));
+    ggml_set_output(output);
+
+    ggml_cgraph * graph = ggml_new_graph(ctx);
+    ggml_build_forward_expand(graph, output);
+
+    ggml_backend_sched_t sched = make_scheduler(cpu);
+    require(ggml_backend_sched_alloc_graph(sched, graph), "failed to allocate MUL_MAT_ID graph");
+
+    const std::array<float, n_embd * n_ff * n_expert> weight_data = {
+        1.0f, 2.0f,
+        3.0f, 4.0f,
+    };
+    const std::array<float, n_embd * n_tokens> input_data = {
+        5.0f, 6.0f,
+        7.0f, 8.0f,
+    };
+    const std::array<int32_t, n_used * n_tokens> id_data = {
+        -1, 0,
+        1, -1,
+    };
+    const std::array<float, n_ff * n_used * n_tokens> expected = {
+        0.0f, 17.0f,
+        53.0f, 0.0f,
+    };
+
+    ggml_backend_tensor_set(weights, weight_data.data(), 0, sizeof(weight_data));
+    ggml_backend_tensor_set(input, input_data.data(), 0, sizeof(input_data));
+    ggml_backend_tensor_set(ids, id_data.data(), 0, sizeof(id_data));
+
+    require(
+        ggml_backend_sched_graph_compute(sched, graph) == GGML_STATUS_SUCCESS,
+        "MUL_MAT_ID graph computation failed");
+    ggml_backend_sched_synchronize(sched);
+
+    std::array<float, n_ff * n_used * n_tokens> actual = {};
+    ggml_backend_tensor_get(output, actual.data(), 0, sizeof(actual));
+    for (size_t index = 0; index < actual.size(); ++index) {
+        require(std::fabs(actual[index] - expected[index]) < 1e-6f,
+            "guarded MUL_MAT_ID did not zero missing slots or preserve valid results");
+    }
+
+    ggml_backend_sched_free(sched);
+    ggml_free(ctx);
+}
+
+} // namespace
+
+int main() {
+    ggml_backend_load_all();
+
+    ggml_backend_t cpu = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
+    require(cpu != nullptr, "failed to initialize CPU backend");
+
+    test_route_remap(cpu);
+    test_mul_mat_id_missing_slots(cpu);
+
+    ggml_backend_free(cpu);
     return 0;
 }
