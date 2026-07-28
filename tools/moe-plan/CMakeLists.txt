@@ -139,4 +139,19 @@ if(BUILD_TESTING)
     target_compile_features(${REGISTRY_TEST_TARGET} PRIVATE cxx_std_17)
     add_test(NAME ${REGISTRY_TEST_TARGET} COMMAND $<TARGET_FILE:${REGISTRY_TEST_TARGET}>)
     set_property(TEST ${REGISTRY_TEST_TARGET} PROPERTY LABELS main)
+
+    set(ROUTE_PARTITION_TEST_TARGET test-moe-route-partition)
+    add_executable(
+        ${ROUTE_PARTITION_TEST_TARGET}
+        ../../tests/test-moe-route-partition.cpp
+        ../../src/llama-moe-route-partition.cpp)
+    target_include_directories(
+        ${ROUTE_PARTITION_TEST_TARGET}
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/ggml/include)
+    target_compile_features(${ROUTE_PARTITION_TEST_TARGET} PRIVATE cxx_std_17)
+    add_test(NAME ${ROUTE_PARTITION_TEST_TARGET} COMMAND $<TARGET_FILE:${ROUTE_PARTITION_TEST_TARGET}>)
+    set_property(TEST ${ROUTE_PARTITION_TEST_TARGET} PROPERTY LABELS main)
 endif()
