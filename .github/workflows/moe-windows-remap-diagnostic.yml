@@ -1,0 +1,54 @@
+name: MoE Windows Remap Diagnostic
+
+on:
+  push:
+    branches:
+      - agent/static-moe-expert-placement
+    paths:
+      - '.github/workflows/moe-windows-remap-diagnostic.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/static-moe-expert-placement
+          fetch-depth: 1
+
+      - name: Configure and build route remap
+        shell: cmd
+        run: >-
+          cmake -S . -B build-remap -G "Ninja Multi-Config"
+          -DCMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake
+          -DBUILD_SHARED_LIBS=ON
+          -DLLAMA_BUILD_SERVER=OFF
+          -DLLAMA_BUILD_EXAMPLES=OFF
+          -DLLAMA_BUILD_TOOLS=ON
+          -DLLAMA_BUILD_TESTS=ON
+          && cmake --build build-remap --config Release --parallel --target test-moe-route-remap
+
+      - name: Run and capture route remap
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path build-remap -Recurse -Filter test-moe-route-remap.exe | Select-Object -First 1
+          if (-not $exe) { throw "test-moe-route-remap.exe not found" }
+
+          $log = Join-Path $PWD "moe-windows-remap-error.txt"
+          & $exe.FullName *> $log
+          $status = $LASTEXITCODE
+          if ($status -eq 0) {
+              Remove-Item $log -ErrorAction SilentlyContinue
+              exit 0
+          }
+
+          Get-Content $log
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add moe-windows-remap-error.txt
+          git commit -m "ci: capture Windows MoE remap failure"
+          git push origin HEAD:agent/static-moe-expert-placement
+          exit $status
