@@ -46,8 +46,17 @@ jobs:
               "raise SystemExit(f'{path}: expected one match, found {count}')",
               "raise SystemExit(f'{path}: expected one match, found {count}; marker={old[:160]!r}')")
           script = script.replace(
+              "'''    ggml_tensor * build_lora_mm_id(\\n          ggml_tensor * w,   // ggml_tensor * as\\n          ggml_tensor * cur, // ggml_tensor * b\\n          ggml_tensor * ids) const;",
+              "'''    ggml_tensor * build_lora_mm_id(\\n              ggml_tensor * w,   // ggml_tensor * as\\n              ggml_tensor * cur, // ggml_tensor * b\\n              ggml_tensor * ids) const;")
+          script = script.replace(
+              "marker = '''    // build MoE FFN without bias tensors\\n              ggml_tensor * build_moe_ffn(",
+              "marker = '''    // build MoE FFN without bias tensors\\n    ggml_tensor * build_moe_ffn(")
+          script = script.replace(
               "needle = '''ggml_tensor * llm_graph_context::build_moe_ffn(\\n                   ggml_tensor * cur,\\n                   ggml_tensor * gate_inp,\\n                   ggml_tensor * gate_inp_b,",
               "needle = '''ggml_tensor * llm_graph_context::build_moe_ffn(\\n         ggml_tensor * cur,\\n         ggml_tensor * gate_inp,\\n         ggml_tensor * gate_inp_b,")
+          script = script.replace(
+              "''' + execution_body + '''\\n\\n          '''",
+              "''' + execution_body + '''\\n}\\n\\n          '''")
           exec(compile(script, 'graph-refactor-patch.py', 'exec'))
           PY
           then
