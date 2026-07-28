@@ -1,3 +1,165 @@
 === declarations and constructors ===
+ggml/src/ggml-openvino/openvino/op_table.cpp:23:        {"GGML_OP_GET_ROWS",       op::translate_get_rows                         },
+ggml/src/ggml-openvino/ggml-decoder.cpp:202:    case GGML_OP_GET_ROWS: {
+ggml/src/ggml-openvino/ggml-decoder.cpp:927:        {GGML_OP_GET_ROWS,       "GGML_OP_GET_ROWS"      },
+ggml/src/ggml-openvino/ggml-openvino.cpp:802:    case GGML_OP_GET_ROWS:
+ggml/src/ggml-openvino/ggml-openvino.cpp:936:    if (op->op == GGML_OP_GET_ROWS) {
+ggml/src/ggml-openvino/ggml-openvino.cpp:955:                                                 GGML_OP_GET_ROWS, GGML_OP_ROPE, GGML_OP_RMS_NORM, GGML_OP_SCALE,
+ggml/src/ggml-openvino/ggml-openvino.cpp:1006:            GGML_OP_GET_ROWS,
+ggml/src/ggml-openvino/ggml-decoder.h:218:        return op->op == GGML_OP_GET_ROWS && tensor == op->src[1] && op->src[0]->op == GGML_OP_NONE;
+ggml/src/ggml-openvino/ggml-decoder.h:226:        return tensor->op == GGML_OP_GET_ROWS && op->op == GGML_OP_RMS_NORM;
+ggml/src/ggml-openvino/ggml-decoder.h:246:        return op->op == GGML_OP_GET_ROWS && tensor == op->src[1] && op->src[0]->op != GGML_OP_NONE;
+ggml/src/ggml-cuda/ggml-cuda.cu:3116:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-cuda/ggml-cuda.cu:3119:        case GGML_OP_GET_ROWS_BACK:
+ggml/src/ggml-cuda/ggml-cuda.cu:3794:        if (node_idx >= n_nodes || nodes[node_idx]->op != GGML_OP_GET_ROWS) {
+ggml/src/ggml-cuda/ggml-cuda.cu:4192:                                            GGML_OP_GET_ROWS });
+ggml/src/ggml-cuda/ggml-cuda.cu:4197:                               { gating_op, GGML_OP_RESHAPE, GGML_OP_ARGSORT, GGML_OP_VIEW, GGML_OP_GET_ROWS });
+ggml/src/ggml-cuda/ggml-cuda.cu:4223:                ops.insert(ops.end(), { GGML_OP_ARGSORT, GGML_OP_VIEW, GGML_OP_GET_ROWS, GGML_OP_RESHAPE,
+ggml/src/ggml-cuda/ggml-cuda.cu:5519:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-cuda/ggml-cuda.cu:5539:        case GGML_OP_GET_ROWS_BACK:
+ggml/src/ggml-cuda/ggml-cuda.cu:5801:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-webgpu/ggml-webgpu.cpp:3092:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-webgpu/ggml-webgpu.cpp:4116:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-metal/ggml-metal-device.m:1396:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-metal/ggml-metal-ops.cpp:385:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-metal/ggml-metal-common.cpp:281:            case GGML_OP_GET_ROWS:
+ggml/src/ggml-backend-meta.cpp:901:            case GGML_OP_GET_ROWS: {
+ggml/src/ggml-backend-meta.cpp:904:            case GGML_OP_GET_ROWS_BACK: {
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:521:                                                                             GGML_OP_VIEW,     GGML_OP_GET_ROWS, GGML_OP_RESHAPE,
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:526:                                                                            GGML_OP_ARGSORT,  GGML_OP_VIEW,     GGML_OP_GET_ROWS,
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:531:                                                                             GGML_OP_VIEW,     GGML_OP_GET_ROWS };
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:534:                                                                             GGML_OP_GET_ROWS, GGML_OP_RESHAPE,
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:10261:    case GGML_OP_GET_ROWS:
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:10943:    GGML_ASSERT(dst->op != GGML_OP_GET_ROWS || (a_offset == 0 && b_offset == 0 && d_offset == 0));
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:10986:    GGML_ASSERT(op == GGML_OP_GET_ROWS || op == GGML_OP_CPY || (!ggml_is_quantized(src0->type) && (src1 == nullptr || !ggml_is_quantized(src1->type))));  // NOLINT
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:11093:    case GGML_OP_GET_ROWS:
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:11332:    ggml_vk_op_f32<vk_op_binary_push_constants>(ctx, subctx, src0, src1, nullptr, nullptr, dst, GGML_OP_GET_ROWS, {
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:14208:    case GGML_OP_GET_ROWS:
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:16033:                    ggml_can_fuse_subgraph(cgraph, i + ctx->num_additional_fused_ops, { GGML_OP_GET_ROWS, GGML_OP_SCALE }, { i + ctx->num_additional_fused_ops + 1 })) {
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:16915:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:17287:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:18035:        } else if (tensor->op == GGML_OP_GET_ROWS) {
+ggml/src/ggml-vulkan/ggml-vulkan.cpp:18036:            tensor_clone = ggml_get_rows(ggml_ctx, src_clone[0], src_clone[1]);
+ggml/src/ggml-sycl/ggml-sycl.cpp:4521:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-sycl/ggml-sycl.cpp:5307:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-sycl/ggml-sycl.cpp:5588:        case GGML_OP_GET_ROWS:
+ggml/src/ggml.c:3897:struct ggml_tensor * ggml_get_rows(
+ggml/src/ggml.c:3913:    result->op     = GGML_OP_GET_ROWS;
+ggml/src/ggml.c:3934:    result->op     = GGML_OP_GET_ROWS_BACK;
+ggml/src/ggml.c:6798:        case GGML_OP_GET_ROWS: {
+ggml/src/ggml.c:7129:            case GGML_OP_GET_ROWS:      // row indices not differentiable
+ggml/src/ggml.c:7130:            case GGML_OP_GET_ROWS_BACK: // same as for GET_ROWS
+ggml/src/ggml-cpu/ggml-cpu.cpp:466:        case GGML_OP_GET_ROWS_BACK:
+ggml/src/ggml-cpu/kleidiai/kleidiai.cpp:601:        } else if (dst->op == GGML_OP_GET_ROWS) {
+ggml/src/ggml-cpu/kleidiai/kleidiai.cpp:1458:        if ((op->op == GGML_OP_MUL_MAT || op->op == GGML_OP_GET_ROWS) &&
+ggml/src/ggml-cpu/kleidiai/kleidiai.cpp:1482:        if (op->op == GGML_OP_MUL_MAT || op->op == GGML_OP_GET_ROWS) {
+ggml/src/ggml-cpu/ggml-cpu.c:1915:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-cpu/ggml-cpu.c:1919:        case GGML_OP_GET_ROWS_BACK:
+ggml/src/ggml-cpu/ggml-cpu.c:2373:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-cpu/ggml-cpu.c:2387:        case GGML_OP_GET_ROWS_BACK:
+ggml/src/ggml-cpu/spacemit/ime.cpp:1103:            case GGML_OP_GET_ROWS:
+ggml/src/ggml-cpu/spacemit/ime.cpp:1632:            case GGML_OP_GET_ROWS:
+ggml/src/ggml-opencl/ggml-opencl.cpp:5068:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-opencl/ggml-opencl.cpp:18544:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-hexagon/ggml-hexagon.cpp:3143:        case GGML_OP_GET_ROWS:        return HTP_OP_GET_ROWS;
+ggml/src/ggml-hexagon/ggml-hexagon.cpp:3689:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-cann/ggml-cann.cpp:1778:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-cann/ggml-cann.cpp:2474:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-cann/ggml-cann.cpp:2866: * equal to the minimum batch size and the operation is not GGML_OP_GET_ROWS.
+ggml/src/ggml-cann/ggml-cann.cpp:2876:    return op->ne[1] >= dev_ctx->op_offload_min_batch_size && op->op != GGML_OP_GET_ROWS;
+ggml/src/ggml-cann/aclnn_ops.cpp:2043:            GGML_ABORT("Unsupported tensor type for GGML_OP_GET_ROWS");
+ggml/include/ggml.h:528:        GGML_OP_GET_ROWS,
+ggml/include/ggml.h:529:        GGML_OP_GET_ROWS_BACK,
+ggml/include/ggml.h:1667:    GGML_API struct ggml_tensor * ggml_get_rows(
 === CPU forward implementations ===
+ggml/src/ggml-cpu/ops.cpp:4755:// ggml_compute_forward_get_rows
+ggml/src/ggml-cpu/ops.cpp:4757:static void ggml_compute_forward_get_rows_q(
+ggml/src/ggml-cpu/ops.cpp:4801:static void ggml_compute_forward_get_rows_f16(
+ggml/src/ggml-cpu/ops.cpp:4842:static void ggml_compute_forward_get_rows_bf16(
+ggml/src/ggml-cpu/ops.cpp:4883:static void ggml_compute_forward_get_rows_f32(
+ggml/src/ggml-cpu/ops.cpp:4924:void ggml_compute_forward_get_rows(
+ggml/src/ggml-cpu/ops.cpp:4959:                ggml_compute_forward_get_rows_q(params, dst);
+ggml/src/ggml-cpu/ops.cpp:4963:                ggml_compute_forward_get_rows_f16(params, dst);
+ggml/src/ggml-cpu/ops.cpp:4967:                ggml_compute_forward_get_rows_bf16(params, dst);
+ggml/src/ggml-cpu/ops.cpp:4972:                ggml_compute_forward_get_rows_f32(params, dst);
+ggml/src/ggml-cpu/ops.cpp:5082:// ggml_compute_forward_get_rows_back
+ggml/src/ggml-cpu/ops.cpp:5084:static void ggml_compute_forward_get_rows_back_f32_f16(
+ggml/src/ggml-cpu/ops.cpp:5117:static void ggml_compute_forward_get_rows_back_f32(
+ggml/src/ggml-cpu/ops.cpp:5150:void ggml_compute_forward_get_rows_back(
+ggml/src/ggml-cpu/ops.cpp:5159:                ggml_compute_forward_get_rows_back_f32_f16(params, dst);
+ggml/src/ggml-cpu/ops.cpp:5163:                ggml_compute_forward_get_rows_back_f32(params, dst);
+ggml/src/ggml-cpu/ops.h:56:void ggml_compute_forward_get_rows(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ggml/src/ggml-cpu/ops.h:57:void ggml_compute_forward_get_rows_back(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+ggml/src/ggml-cpu/kleidiai/kleidiai.cpp:603:                return compute_forward_get_rows(params, dst);
+ggml/src/ggml-cpu/kleidiai/kleidiai.cpp:1123:    bool compute_forward_get_rows(struct ggml_compute_params * params, struct ggml_tensor * dst) {
+ggml/src/ggml-cpu/ggml-cpu.c:1917:                ggml_compute_forward_get_rows(params, tensor);
+ggml/src/ggml-cpu/ggml-cpu.c:1921:                ggml_compute_forward_get_rows_back(params, tensor);
+ggml/src/ggml-cpu/spacemit/ime.cpp:1118:                    ggml_compute_forward_get_rows(params, op);
 === CUDA implementations ===
+ggml/src/ggml-cuda/mmf.cu:5:static __forceinline__ int mmf_get_rows_per_block(const int cc) {
+ggml/src/ggml-cuda/mmf.cu:76:        const int64_t ne_get_rows   = n_tokens * n_expert_used;
+ggml/src/ggml-cuda/mmf.cu:78:        ids_src_compact_dev.alloc(ctx.pool(), ne_get_rows);
+ggml/src/ggml-cuda/mmf.cu:79:        ids_dst_compact_dev.alloc(ctx.pool(), ne_get_rows);
+ggml/src/ggml-cuda/mmf.cu:101:    const int rows_per_block = mmf_get_rows_per_block(cc);
+ggml/src/ggml-cuda/mmf.cu:154:    if (src0_ne[1] % mmf_get_rows_per_block(cc) != 0) {
+ggml/src/ggml-cuda/mmq.cu:169:    const int64_t ne_get_rows = ne12 * n_expert_used;
+ggml/src/ggml-cuda/mmq.cu:172:    ggml_cuda_pool_alloc<int32_t> ids_src1(ctx.pool(), ne_get_rows);
+ggml/src/ggml-cuda/mmq.cu:173:    ggml_cuda_pool_alloc<int32_t> ids_dst(ctx.pool(), ne_get_rows);
+ggml/src/ggml-cuda/mmq.cu:217:        ne00, ne01, ne_get_rows, s01, ne_get_rows, s1,
+ggml/src/ggml-cuda/ggml-cuda.cu:2976:    const int64_t ne_get_rows = ne12 * n_expert_used;
+ggml/src/ggml-cuda/ggml-cuda.cu:2978:    std::vector<int32_t> ids_to_sorted_host(ne_get_rows, 0);
+ggml/src/ggml-cuda/ggml-cuda.cu:2979:    std::vector<int32_t> ids_from_sorted_host(ne_get_rows, -1);
+ggml/src/ggml-cuda/ggml-cuda.cu:2982:    ggml_cuda_pool_alloc<int32_t> ids_buf_dev(ctx.pool(), 2*ne_get_rows);
+ggml/src/ggml-cuda/ggml-cuda.cu:3011:    GGML_ASSERT(allow_negative_ids || n_valid_rows == ne_get_rows);
+ggml/src/ggml-cuda/ggml-cuda.cu:3026:    CUDA_CHECK(cudaMemcpyAsync(ids_buf_dev.ptr, ids_to_sorted_host.data(), 2*ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
+ggml/src/ggml-cuda/ggml-cuda.cu:3029:    const int32_t * ids_to_sorted   = ids_buf_dev.ptr + 0*ne_get_rows;
+ggml/src/ggml-cuda/ggml-cuda.cu:3030:    const int32_t * ids_from_sorted = ids_buf_dev.ptr + 1*ne_get_rows;
+ggml/src/ggml-cuda/ggml-cuda.cu:3032:    get_rows_cuda(src1->data, src1->type, ids_to_sorted, src1_sorted.ptr, type_src1_sorted,
+ggml/src/ggml-cuda/ggml-cuda.cu:3034:        n_valid_rows, 1, 1, sizeof(int32_t), ne_get_rows*sizeof(int32_t), ne_get_rows*sizeof(int32_t),
+ggml/src/ggml-cuda/ggml-cuda.cu:3096:    get_rows_cuda(dst_sorted.ptr, type_dst_sorted, ids_from_sorted, dst->data, dst->type,
+ggml/src/ggml-cuda/ggml-cuda.cu:3098:        ne_get_rows, 1, 1, sizeof(int32_t), ne_get_rows*sizeof(int32_t), ne_get_rows*sizeof(int32_t),
+ggml/src/ggml-cuda/ggml-cuda.cu:3116:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-cuda/ggml-cuda.cu:3117:            ggml_cuda_op_get_rows(ctx, dst);
+ggml/src/ggml-cuda/ggml-cuda.cu:3119:        case GGML_OP_GET_ROWS_BACK:
+ggml/src/ggml-cuda/ggml-cuda.cu:3120:            ggml_cuda_op_get_rows_back(ctx, dst);
+ggml/src/ggml-cuda/ggml-cuda.cu:3794:        if (node_idx >= n_nodes || nodes[node_idx]->op != GGML_OP_GET_ROWS) {
+ggml/src/ggml-cuda/ggml-cuda.cu:4192:                                            GGML_OP_GET_ROWS });
+ggml/src/ggml-cuda/ggml-cuda.cu:4197:                               { gating_op, GGML_OP_RESHAPE, GGML_OP_ARGSORT, GGML_OP_VIEW, GGML_OP_GET_ROWS });
+ggml/src/ggml-cuda/ggml-cuda.cu:4223:                ops.insert(ops.end(), { GGML_OP_ARGSORT, GGML_OP_VIEW, GGML_OP_GET_ROWS, GGML_OP_RESHAPE,
+ggml/src/ggml-cuda/ggml-cuda.cu:5519:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-cuda/ggml-cuda.cu:5539:        case GGML_OP_GET_ROWS_BACK:
+ggml/src/ggml-cuda/ggml-cuda.cu:5801:        case GGML_OP_GET_ROWS:
+ggml/src/ggml-cuda/getrows.cuh:6:void get_rows_cuda(
+ggml/src/ggml-cuda/getrows.cuh:13:void ggml_cuda_op_get_rows(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
+ggml/src/ggml-cuda/getrows.cuh:15:void ggml_cuda_op_get_rows_back(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
+ggml/src/ggml-cuda/topk-moe.cu:77:    It is intended as fusion of softmax->top-k->get_rows pipeline for MoE models
+ggml/src/ggml-cuda/mmq.cuh:19:typedef void (*mmq_write_back_t)(const float * __restrict__ sum, const int32_t * __restrict__ get_rows_to_sorted,
+ggml/src/ggml-cuda/getrows.cu:6:static __global__ void k_get_rows(
+ggml/src/ggml-cuda/getrows.cu:44:static __global__ void k_get_rows_float(
+ggml/src/ggml-cuda/getrows.cu:80:static __global__ void k_get_rows_back_float(
+ggml/src/ggml-cuda/getrows.cu:104:static void get_rows_cuda_q(
+ggml/src/ggml-cuda/getrows.cu:131:    k_get_rows<qk, qr, dq><<<block_nums, block_dims, 0, stream>>>(
+ggml/src/ggml-cuda/getrows.cu:141:static void get_rows_cuda_float(
+ggml/src/ggml-cuda/getrows.cu:167:    ggml_cuda_kernel_launch(k_get_rows_float<src0_t, dst_t>, launch_params,
+ggml/src/ggml-cuda/getrows.cu:177:static void ggml_cuda_get_rows_switch_src0_type(
+ggml/src/ggml-cuda/getrows.cu:185:            get_rows_cuda_float((const half *) src0_d, src1_d, dst_d,
+ggml/src/ggml-cuda/getrows.cu:189:            get_rows_cuda_float((const float *) src0_d, src1_d, dst_d,
+ggml/src/ggml-cuda/getrows.cu:193:            get_rows_cuda_float((const int32_t *) src0_d, src1_d, dst_d,
+ggml/src/ggml-cuda/getrows.cu:197:            get_rows_cuda_float((const nv_bfloat16 *) src0_d, src1_d, dst_d,
+ggml/src/ggml-cuda/getrows.cu:201:            get_rows_cuda_q<QK1_0, QR1_0, dequantize_q1_0>(src0_d, src1_d, dst_d,
+ggml/src/ggml-cuda/getrows.cu:205:            get_rows_cuda_q<QK4_0, QR4_0, dequantize_q4_0>(src0_d, src1_d, dst_d,
+ggml/src/ggml-cuda/getrows.cu:209:            get_rows_cuda_q<QK4_1, QR4_1, dequantize_q4_1>(src0_d, src1_d, dst_d,
+ggml/src/ggml-cuda/getrows.cu:213:            get_rows_cuda_q<QK5_0, QR5_0, dequantize_q5_0>(src0_d, src1_d, dst_d,
+ggml/src/ggml-cuda/getrows.cu:217:            get_rows_cuda_q<QK5_1, QR5_1, dequantize_q5_1>(src0_d, src1_d, dst_d,
+ggml/src/ggml-cuda/getrows.cu:221:            get_rows_cuda_q<QK8_0, QR8_0, dequantize_q8_0>(src0_d, src1_d, dst_d,
+ggml/src/ggml-cuda/getrows.cu:226:            get_rows_cuda_q<QK_TQ4_1S, QR_TQ4_1S, dequantize_tq4_1s>(src0_d, src1_d, dst_d,
+ggml/src/ggml-cuda/getrows.cu:231:            get_rows_cuda_q<QK_TQ3_0, QR_TQ3_1S, dequantize_tq3_1s>(src0_d, src1_d, dst_d,
+ggml/src/ggml-cuda/getrows.cu:241:void get_rows_cuda(
+ggml/src/ggml-cuda/getrows.cu:249:            ggml_cuda_get_rows_switch_src0_type(src0_d, src0_type, src1_d, (float *) dst_d,
+ggml/src/ggml-cuda/getrows.cu:253:            ggml_cuda_get_rows_switch_src0_type(src0_d, src0_type, src1_d, (int32_t *) dst_d,
+ggml/src/ggml-cuda/getrows.cu:257:            ggml_cuda_get_rows_switch_src0_type(src0_d, src0_type, src1_d, (half *) dst_d,
+ggml/src/ggml-cuda/getrows.cu:261:            ggml_cuda_get_rows_switch_src0_type(src0_d, src0_type, src1_d, (nv_bfloat16 *) dst_d,
+ggml/src/ggml-cuda/getrows.cu:270:void ggml_cuda_op_get_rows(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+ggml/src/ggml-cuda/getrows.cu:285:    get_rows_cuda(src0->data, src0->type, (const int32_t *) src1->data, dst->data, dst->type,
+ggml/src/ggml-cuda/getrows.cu:289:void ggml_cuda_op_get_rows_back(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+ggml/src/ggml-cuda/getrows.cu:317:    k_get_rows_back_float<<<block_nums, block_dims, 0, stream>>>(src0_d, src1_d, dst_d, ne00, ne10);
