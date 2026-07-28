@@ -99,12 +99,33 @@ jobs:
           Copy-Item '.\tools\moe-plan\run-u3.cmd' "$dst\run-moe-u3.cmd"
           Copy-Item LICENSE $dst
 
-          robocopy "${{ env.CUDA_PATH }}\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
-          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
-          robocopy "${{ env.CUDA_PATH }}\lib" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
-          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
-          robocopy "${{ env.CUDA_PATH }}\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
-          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+          $candidateDirs = @(
+              (Join-Path $env:CUDA_PATH 'bin'),
+              (Join-Path $env:CUDA_PATH 'bin\x64'),
+              (Join-Path $env:CUDA_PATH 'lib')
+          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Container }
+
+          if ($candidateDirs.Count -eq 0) {
+              throw "No existing CUDA runtime directories under CUDA_PATH=$env:CUDA_PATH"
+          }
+
+          $patterns = @('cudart64_*.dll', 'cublas64_*.dll', 'cublasLt64_*.dll')
+          foreach ($pattern in $patterns) {
+              $matches = @()
+              foreach ($dir in $candidateDirs) {
+                  $matches += Get-ChildItem -LiteralPath $dir -Filter $pattern -File -ErrorAction SilentlyContinue
+              }
+              $matches = @($matches | Sort-Object FullName -Unique)
+              if ($matches.Count -eq 0) {
+                  throw "Required CUDA DLL pattern not found: $pattern; searched: $($candidateDirs -join ', ')"
+              }
+              foreach ($file in $matches) {
+                  Copy-Item -LiteralPath $file.FullName -Destination $dst -Force
+              }
+          }
+
+          Get-ChildItem -LiteralPath $dst -File | Sort-Object Name |
+              Select-Object Name, Length | Format-Table -AutoSize
 
       - name: Smoke-test packaged executables
         shell: pwsh
@@ -112,7 +133,7 @@ jobs:
           $dst = (Resolve-Path '.\moe-u3-package').Path
           $oldPath = $env:PATH
           Remove-Item Env:GGML_NO_BACKTRACE -ErrorAction SilentlyContinue
-          $env:PATH = "$dst;${{ env.CUDA_PATH }}\bin;$oldPath"
+          $env:PATH = "$dst;$oldPath"
 
           try {
               Push-Location $dst
@@ -170,16 +191,16 @@ jobs:
             "{0}  {1}" -f ((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()), $_.Name
           } | Set-Content "$dst\U3-FILES-SHA256.txt" -Encoding UTF8
 
-          7z a moe-u3-windows-x64-cuda13.3-sm120-dll-smoke-fix.zip "$dst\*"
-          Get-FileHash .\moe-u3-windows-x64-cuda13.3-sm120-dll-smoke-fix.zip -Algorithm SHA256 |
+          7z a moe-u3-windows-x64-cuda13.3-sm120-dll-copy-fix.zip "$dst\*"
+          Get-FileHash .\moe-u3-windows-x64-cuda13.3-sm120-dll-copy-fix.zip -Algorithm SHA256 |
             Format-List | Out-File .\U3-PACKAGE-SHA256.txt -Encoding utf8
 
       - name: Upload U3 package
         uses: actions/upload-artifact@v6
         with:
-          name: moe-u3-windows-x64-cuda13.3-sm120-dll-smoke-fix
+          name: moe-u3-windows-x64-cuda13.3-sm120-dll-copy-fix
           path: |
-            moe-u3-windows-x64-cuda13.3-sm120-dll-smoke-fix.zip
+            moe-u3-windows-x64-cuda13.3-sm120-dll-copy-fix.zip
             U3-PACKAGE-SHA256.txt
           retention-days: 7
 
