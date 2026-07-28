@@ -4416,6 +4416,9 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
         const int n_ids = ids->ne[0]; // n_expert_used
         const int n_as  = ne02;       // n_expert
 
+        // See the generic CPU kernel for the guarded -1 split-slot contract.
+        const bool allow_negative_ids = op->op_params[0] == 0x4D4F4553;
+
         const size_t nbw1 = ggml_row_size(PARAM_TYPE, ne10);
         const size_t nbw2 = nbw1*ne11;
         const size_t nbw3 = nbw2*ne12;
@@ -4449,6 +4452,10 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
 #define MMID_MATRIX_ROW(row_id, i1) matrix_rows[(row_id) * ne12 + (i1)]
 
         if (ith == 0) {
+            if (allow_negative_ids) {
+                memset(dst->data, 0, ggml_nbytes(dst));
+            }
+
             // initialize matrix_row_counts
             memset(matrix_row_counts, 0, n_as * sizeof(int64_t));
 
@@ -4458,6 +4465,10 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
                     const int32_t i02 =
                         *(const int32_t *) ((const char *) ids->data + iid1 * ids->nb[1] + id * ids->nb[0]);
 
+                    if (allow_negative_ids && i02 < 0) {
+                        GGML_ASSERT(i02 == -1);
+                        continue;
+                    }
                     GGML_ASSERT(i02 >= 0 && i02 < n_as);
 
                     MMID_MATRIX_ROW(i02, matrix_row_counts[i02]) = { id, iid1 };

@@ -1604,6 +1604,10 @@ static void ggml_compute_forward_mul_mat_id(
     const int n_ids = ids->ne[0]; // n_expert_used
     const int n_as  = ne02;       // n_expert
 
+    // Split MoE branches preserve top-k slots with -1 for experts owned by
+    // the other backend. Stock MUL_MAT_ID tensors leave this parameter zero.
+    const bool allow_negative_ids = dst->op_params[0] == 0x4D4F4553;
+
     void * wdata_cur = params->wdata;
 
     if (src1->type != vec_dot_type) {
@@ -1659,6 +1663,10 @@ static void ggml_compute_forward_mul_mat_id(
     }
 
     if (ith == 0) {
+        if (allow_negative_ids) {
+            memset(dst->data, 0, ggml_nbytes(dst));
+        }
+
         // initialize matrix_row_counts
         memset(matrix_row_counts, 0, n_as*sizeof(int64_t));
 
@@ -1667,7 +1675,11 @@ static void ggml_compute_forward_mul_mat_id(
             for (int id = 0; id < n_ids; ++id) {
                 const int32_t i02 = *(const int32_t *) ((const char *) ids->data + iid1*ids->nb[1] + id*ids->nb[0]);
 
-                assert(i02 >= 0 && i02 < n_as);
+                if (allow_negative_ids && i02 < 0) {
+                    GGML_ASSERT(i02 == -1);
+                    continue;
+                }
+                GGML_ASSERT(i02 >= 0 && i02 < n_as);
 
                 MMID_MATRIX_ROW(i02, matrix_row_counts[i02]) = (struct mmid_row_mapping) {id, iid1};
                 matrix_row_counts[i02] += 1;
