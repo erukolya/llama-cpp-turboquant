@@ -1,0 +1,52 @@
+name: Clean Temporary MoE Diagnostics
+
+on:
+  push:
+    branches:
+      - agent/static-moe-expert-placement
+    paths:
+      - '.github/workflows/moe-cleanup-temporary.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/static-moe-expert-placement
+          fetch-depth: 0
+
+      - name: Remove one-shot patch and diagnostic files
+        shell: bash
+        run: |
+          git rm -f --ignore-unmatch \
+            .github/scripts/moe_graph_refactor.py \
+            .github/scripts/moe_layer_bindings.py \
+            .github/scripts/moe_static_graph.py \
+            .github/workflows/moe-apply-graph-refactor.yml \
+            .github/workflows/moe-apply-layer-bindings.yml \
+            .github/workflows/moe-graph-refactor-diagnostic.yml \
+            .github/workflows/moe-graph-refactor-push.yml \
+            .github/workflows/moe-layer-bindings-diagnostic.yml \
+            .github/workflows/moe-locate-get-rows.yml \
+            .github/workflows/moe-static-graph-diagnostic.yml \
+            .github/workflows/moe-windows-remap-diagnostic.yml \
+            .github/workflows/moe-server-metrics-diagnostic.yml \
+            .github/workflows/moe-cleanup-temporary.yml \
+            graph-refactor-error.txt \
+            moe-graph-refactor-error.txt \
+            moe-layer-bindings-error.txt \
+            moe-static-graph-error.txt \
+            moe-get-rows-locations.txt \
+            moe-windows-remap-error.txt \
+            moe-windows-remap-result.txt \
+            moe-windows-suite-result.txt
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'ci: remove temporary MoE diagnostics'
+          git pull --rebase origin agent/static-moe-expert-placement
+          git push origin HEAD:agent/static-moe-expert-placement
