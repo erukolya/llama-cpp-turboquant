@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   CMAKE_ARGS: >-
@@ -37,6 +37,25 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Record active U3 run
+        shell: pwsh
+        run: |
+          @"
+          status=in_progress
+          run=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          commit=${{ github.sha }}
+          recorded_at_utc=$([DateTime]::UtcNow.ToString('o'))
+          "@ | Set-Content '.github\moe-u3-build-status.txt' -Encoding UTF8
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add '.github\moe-u3-build-status.txt'
+          if (-not (git diff --cached --quiet)) {
+              git commit -m "ci: record active MoE U3 run ${{ github.run_id }}"
+              git pull --rebase origin agent/static-moe-expert-placement
+              git push origin HEAD:agent/static-moe-expert-placement
+          }
 
       - name: Install CUDA 13.3
         uses: ./.github/actions/windows-setup-cuda
