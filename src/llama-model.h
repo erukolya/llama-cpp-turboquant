@@ -319,6 +319,8 @@ struct llama_layer {
     struct ggml_tensor * ffn_up_exps_gpu      = nullptr;
     struct ggml_tensor * ffn_gate_up_exps_cpu = nullptr;
     struct ggml_tensor * ffn_gate_up_exps_gpu = nullptr;
+    struct ggml_tensor * ffn_route_map_cpu     = nullptr;
+    struct ggml_tensor * ffn_route_map_gpu     = nullptr;
 
     struct ggml_tensor * ffn_gate_inp_b    = nullptr;
     struct ggml_tensor * ffn_gate_exps_b   = nullptr;
