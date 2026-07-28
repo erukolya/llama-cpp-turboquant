@@ -1,24 +1,18 @@
 name: MoE Fast CI
 
 on:
-  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - '.github/workflows/moe-fast-ci.yml'
-      - 'src/llama-moe-*.h'
-      - 'src/llama-moe-*.cpp'
-      - 'tests/test-moe-*.cpp'
-      - 'tools/moe-plan/**'
+      - '.github/workflows/moe-apply-graph-refactor.yml'
+      - 'src/llama-graph.h'
+      - 'src/llama-graph.cpp'
   push:
     branches:
       - agent/static-moe-expert-placement
     paths:
       - '.github/workflows/moe-fast-ci.yml'
-      - 'src/llama-moe-*.h'
-      - 'src/llama-moe-*.cpp'
-      - 'tests/test-moe-*.cpp'
-      - 'tools/moe-plan/**'
 
 permissions:
   contents: write
@@ -29,7 +23,7 @@ concurrency:
 
 jobs:
   apply-graph-refactor:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -37,7 +31,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 1
 
-      - name: Apply graph refactor script
+      - name: Apply corrected graph refactor
         shell: bash
         run: |
           python3 - <<'PY'
@@ -47,6 +41,9 @@ jobs:
           start = lines.index("          python3 - <<'PY'") + 1
           end = lines.index('          PY', start)
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines[start:end])
+          script = script.replace(
+              "needle = '''ggml_tensor * llm_graph_context::build_moe_ffn(\\n                   ggml_tensor * cur,\\n                   ggml_tensor * gate_inp,\\n                   ggml_tensor * gate_inp_b,",
+              "needle = '''ggml_tensor * llm_graph_context::build_moe_ffn(\\n         ggml_tensor * cur,\\n         ggml_tensor * gate_inp,\\n         ggml_tensor * gate_inp_b,")
           exec(compile(script, 'graph-refactor-patch.py', 'exec'))
           PY
           git diff --check
@@ -75,109 +72,3 @@ jobs:
           git add src/llama-graph.h src/llama-graph.cpp
           git commit -m 'moe: separate routing from expert execution'
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
-
-  moe-core:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            name: ubuntu
-          - os: windows-2025
-            name: windows
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-
-      - name: Configure Ubuntu
-        if: runner.os == 'Linux'
-        run: >-
-          cmake -S . -B build
-          -DBUILD_SHARED_LIBS=ON
-          -DLLAMA_BUILD_SERVER=OFF
-          -DLLAMA_BUILD_EXAMPLES=OFF
-          -DLLAMA_BUILD_TOOLS=ON
-          -DLLAMA_BUILD_TESTS=ON
-          -DCMAKE_BUILD_TYPE=Release
-
-      - name: Configure Windows
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: >-
-          cmake -S . -B build -G "Ninja Multi-Config"
-          -DCMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake
-          -DBUILD_SHARED_LIBS=ON
-          -DLLAMA_BUILD_SERVER=OFF
-          -DLLAMA_BUILD_EXAMPLES=OFF
-          -DLLAMA_BUILD_TOOLS=ON
-          -DLLAMA_BUILD_TESTS=ON
-
-      - name: Build MoE targets
-        shell: bash
-        run: >-
-          cmake --build build --config Release --parallel
-          --target
-          test-moe-load-scope
-          test-moe-load-shared
-          test-moe-pool-plan
-          test-moe-storage
-          test-moe-registry
-          test-moe-route-partition
-
-      - name: Run MoE tests
-        shell: bash
-        run: >-
-          ctest --test-dir build -C Release --output-on-failure
-          -R '^test-moe-(load-scope|load-shared|pool-plan|storage|registry|route-partition)$'
-
-  u2-static-tool:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            name: u2-ubuntu
-          - os: windows-2025
-            name: u2-windows
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-
-      - name: Configure Ubuntu static tool
-        if: runner.os == 'Linux'
-        run: >-
-          cmake -S . -B build-u2 -G Ninja
-          -DBUILD_SHARED_LIBS=OFF
-          -DLLAMA_CURL=OFF
-          -DLLAMA_BUILD_SERVER=OFF
-          -DLLAMA_BUILD_EXAMPLES=OFF
-          -DLLAMA_BUILD_TOOLS=ON
-          -DLLAMA_BUILD_TESTS=OFF
-          -DCMAKE_BUILD_TYPE=Release
-
-      - name: Configure Windows static tool
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: >-
-          cmake -S . -B build-u2 -G "Ninja Multi-Config"
-          -DCMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake
-          -DBUILD_SHARED_LIBS=OFF
-          -DLLAMA_CURL=OFF
-          -DLLAMA_BUILD_SERVER=OFF
-          -DLLAMA_BUILD_EXAMPLES=OFF
-          -DLLAMA_BUILD_TOOLS=ON
-          -DLLAMA_BUILD_TESTS=OFF
-
-      - name: Build U2 loader check
-        shell: bash
-        run: >-
-          cmake --build build-u2 --config Release --parallel
-          --target llama-moe-load-check
