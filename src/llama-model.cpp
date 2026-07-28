@@ -1009,6 +1009,8 @@ struct llama_model::impl {
     std::unique_ptr<llama_moe_load_placement_snapshot> moe_placement;
     llama_moe_compact_storage moe_cpu_storage;
     llama_moe_compact_storage moe_gpu_storage;
+    llama_moe_compact_storage moe_cpu_route_storage;
+    llama_moe_compact_storage moe_gpu_route_storage;
 
     bool has_tensor_overrides;
 };
@@ -2718,6 +2720,30 @@ llama_moe_compact_storage & llama_model_base::moe_cpu_storage() noexcept {
 
 llama_moe_compact_storage & llama_model_base::moe_gpu_storage() noexcept {
     return pimpl->moe_gpu_storage;
+}
+
+const llama_moe_compact_storage & llama_model_base::moe_cpu_storage() const noexcept {
+    return pimpl->moe_cpu_storage;
+}
+
+const llama_moe_compact_storage & llama_model_base::moe_gpu_storage() const noexcept {
+    return pimpl->moe_gpu_storage;
+}
+
+llama_moe_compact_storage & llama_model_base::moe_cpu_route_storage() noexcept {
+    return pimpl->moe_cpu_route_storage;
+}
+
+llama_moe_compact_storage & llama_model_base::moe_gpu_route_storage() noexcept {
+    return pimpl->moe_gpu_route_storage;
+}
+
+const llama_moe_compact_storage & llama_model_base::moe_cpu_route_storage() const noexcept {
+    return pimpl->moe_cpu_route_storage;
+}
+
+const llama_moe_compact_storage & llama_model_base::moe_gpu_route_storage() const noexcept {
+    return pimpl->moe_gpu_route_storage;
 }
 
 void llama_model_base::create_tensor_gate_up_exps(llama_layer & layer, int bid, int64_t n_embd_, int64_t n_ff_, int64_t n_expert_, int flags) {

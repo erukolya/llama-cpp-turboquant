@@ -1,6 +1,7 @@
 #include "models.h"
 #include "llama-memory-recurrent.h"
 #include "llama-moe-registry.h"
+#include "llama-moe-route-partition.h"
 
 #include "ggml-cpu.h"
 
@@ -251,6 +252,50 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
             throw std::runtime_error("cannot allocate compact routed-expert pools: " + compact_error);
         }
 
+        std::vector<llama_moe_compact_tensor_spec> cpu_route_specs;
+        std::vector<llama_moe_compact_tensor_spec> gpu_route_specs;
+        cpu_route_specs.reserve(static_placement->layers.size());
+        gpu_route_specs.reserve(static_placement->layers.size());
+        for (const auto & layer_placement : static_placement->layers) {
+            const std::array<int64_t, GGML_MAX_DIMS> ne = {
+                1, static_cast<int64_t>(layer_placement.expert_count), 1, 1 };
+            cpu_route_specs.push_back({
+                llama_moe_route_map_tensor_name(layer_placement.layer, llama_moe_load_backend::cpu),
+                GGML_TYPE_I32, ne });
+            gpu_route_specs.push_back({
+                llama_moe_route_map_tensor_name(layer_placement.layer, llama_moe_load_backend::gpu),
+                GGML_TYPE_I32, ne });
+        }
+        if (!moe_cpu_route_storage().create(
+                ggml_backend_cpu_buffer_type(), cpu_route_specs, compact_error)) {
+            throw std::runtime_error("cannot allocate CPU MoE route maps: " + compact_error);
+        }
+        if (!moe_gpu_route_storage().create(
+                ggml_backend_dev_buffer_type(compact_gpu_device), gpu_route_specs, compact_error)) {
+            throw std::runtime_error("cannot allocate GPU MoE route maps: " + compact_error);
+        }
+        for (const auto & layer_placement : static_placement->layers) {
+            llama_moe_route_maps maps;
+            if (!llama_moe_route_maps_build(layer_placement, maps, compact_error)) {
+                throw std::runtime_error(
+                    "cannot build MoE route maps for layer " +
+                    std::to_string(layer_placement.layer) + ": " + compact_error);
+            }
+            ggml_tensor * cpu_map = moe_cpu_route_storage().find_tensor(
+                llama_moe_route_map_tensor_name(layer_placement.layer, llama_moe_load_backend::cpu));
+            ggml_tensor * gpu_map = moe_gpu_route_storage().find_tensor(
+                llama_moe_route_map_tensor_name(layer_placement.layer, llama_moe_load_backend::gpu));
+            if (cpu_map == nullptr || gpu_map == nullptr) {
+                throw std::runtime_error("allocated MoE route map tensor is missing");
+            }
+            ggml_backend_tensor_set(
+                cpu_map, maps.cpu_local_by_global.data(), 0,
+                maps.cpu_local_by_global.size() * sizeof(int32_t));
+            ggml_backend_tensor_set(
+                gpu_map, maps.gpu_local_by_global.data(), 0,
+                maps.gpu_local_by_global.size() * sizeof(int32_t));
+        }
+
         const size_t previous_size_data = ml.size_data;
         if (ml.size_data == 0) {
             ml.size_data = ml.n_bytes;
@@ -282,12 +327,14 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
 
         LLAMA_LOG_INFO(
             "%s: compact routed experts loaded: tensors=%zu, CPU=%.2f MiB logical / %.2f MiB allocated, "
-            "GPU=%.2f MiB logical / %.2f MiB allocated, packed runtime bytes=0\n",
+            "GPU=%.2f MiB logical / %.2f MiB allocated, route maps=%zu CPU + %zu GPU, packed runtime bytes=0\n",
             __func__, compact_registry.binding_count(),
             moe_cpu_storage().logical_tensor_bytes() / 1024.0 / 1024.0,
             moe_cpu_storage().allocated_buffer_bytes() / 1024.0 / 1024.0,
             moe_gpu_storage().logical_tensor_bytes() / 1024.0 / 1024.0,
-            moe_gpu_storage().allocated_buffer_bytes() / 1024.0 / 1024.0);
+            moe_gpu_storage().allocated_buffer_bytes() / 1024.0 / 1024.0,
+            moe_cpu_route_storage().tensor_count(),
+            moe_gpu_route_storage().tensor_count());
     }
 }
 

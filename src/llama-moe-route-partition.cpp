@@ -24,6 +24,11 @@ bool validate_complete_local_ids(
 
 } // namespace
 
+std::string llama_moe_route_map_tensor_name(int32_t layer, llama_moe_load_backend backend) {
+    const char * suffix = backend == llama_moe_load_backend::cpu ? "cpu" : "gpu";
+    return "moe.route_map." + std::to_string(layer) + "." + suffix;
+}
+
 bool llama_moe_route_maps_build(
         const llama_moe_load_layer_placement & placement,
         llama_moe_route_maps & maps,

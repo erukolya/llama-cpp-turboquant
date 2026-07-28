@@ -9,6 +9,8 @@
 
 constexpr int32_t LLAMA_MOE_ROUTE_MISSING = -1;
 
+std::string llama_moe_route_map_tensor_name(int32_t layer, llama_moe_load_backend backend);
+
 // Dense per-layer lookup tables used by the mixed CPU/CUDA execution graph.
 // For every global expert exactly one table contains a non-negative local ID;
 // the other contains LLAMA_MOE_ROUTE_MISSING.

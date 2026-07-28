@@ -16,6 +16,11 @@ llama_moe_load_location gpu(uint32_t local) {
     return {llama_moe_load_backend::gpu, local};
 }
 
+void test_route_map_tensor_names() {
+    assert(llama_moe_route_map_tensor_name(7, llama_moe_load_backend::cpu) == "moe.route_map.7.cpu");
+    assert(llama_moe_route_map_tensor_name(7, llama_moe_load_backend::gpu) == "moe.route_map.7.gpu");
+}
+
 void test_mixed_partition_preserves_slots() {
     llama_moe_load_layer_placement placement;
     placement.layer = 7;
@@ -179,6 +184,7 @@ void test_invalid_selected_id_is_rejected_without_partial_output() {
 } // namespace
 
 int main() {
+    test_route_map_tensor_names();
     test_mixed_partition_preserves_slots();
     test_partition_preserves_router_weights_and_sum();
     test_all_cpu_and_all_gpu();

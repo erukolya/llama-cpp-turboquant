@@ -712,6 +712,12 @@ struct llama_model_base : public llama_model {
     const llama_moe_load_placement_snapshot * moe_placement() const noexcept;
     llama_moe_compact_storage & moe_cpu_storage() noexcept;
     llama_moe_compact_storage & moe_gpu_storage() noexcept;
+    const llama_moe_compact_storage & moe_cpu_storage() const noexcept;
+    const llama_moe_compact_storage & moe_gpu_storage() const noexcept;
+    llama_moe_compact_storage & moe_cpu_route_storage() noexcept;
+    llama_moe_compact_storage & moe_gpu_route_storage() noexcept;
+    const llama_moe_compact_storage & moe_cpu_route_storage() const noexcept;
+    const llama_moe_compact_storage & moe_gpu_route_storage() const noexcept;
 
     // helper: try to load merged qkv first, fall back to separate q, k, v
     void create_tensor_qkv(llama_layer & layer, int bid,
