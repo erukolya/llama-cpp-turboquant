@@ -66,7 +66,7 @@ jobs:
           set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
           cmake --build build --config Release -j %NINJA_JOBS% --target llama-server llama-moe-load-check llama-moe-plan-check
 
-      - name: Package U3 validator
+      - name: Prepare packaged U3 validator
         shell: pwsh
         run: |
           $src = '.\build\bin\Release'
@@ -77,6 +77,7 @@ jobs:
           Copy-Item "$src\llama-moe-load-check.exe" $dst
           Copy-Item "$src\llama-moe-plan-check.exe" $dst
           Copy-Item '.\tools\moe-plan\run-u3.ps1' "$dst\run-moe-u3.ps1"
+          Copy-Item '.\tools\moe-plan\run-u3.cmd' "$dst\run-moe-u3.cmd"
           Copy-Item LICENSE $dst
 
           robocopy "${{ env.CUDA_PATH }}\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
@@ -86,39 +87,81 @@ jobs:
           robocopy "${{ env.CUDA_PATH }}\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
           if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
 
+      - name: Smoke-test packaged executables
+        shell: pwsh
+        run: |
+          $dst = (Resolve-Path '.\moe-u3-package').Path
+          $oldPath = $env:PATH
+          Remove-Item Env:GGML_NO_BACKTRACE -ErrorAction SilentlyContinue
+          $env:PATH = "$dst;${{ env.CUDA_PATH }}\bin;$oldPath"
+
+          try {
+              Push-Location $dst
+
+              & '.\llama-moe-load-check.exe' --help 2>&1 |
+                  Tee-Object -FilePath '.\checker-help.log'
+              $checkerExit = $LASTEXITCODE
+              if ($checkerExit -ne 0) {
+                  throw "llama-moe-load-check packaged startup smoke test failed: $checkerExit"
+              }
+
+              & '.\llama-moe-plan-check.exe' --help 2>&1 |
+                  Tee-Object -FilePath '.\planner-help.log'
+              $plannerExit = $LASTEXITCODE
+              if ($plannerExit -ne 0) {
+                  throw "llama-moe-plan-check packaged startup smoke test failed: $plannerExit"
+              }
+
+              & '.\llama-server.exe' --version 2>&1 |
+                  Tee-Object -FilePath '.\server-version.log'
+              $serverExit = $LASTEXITCODE
+              if ($serverExit -ne 0) {
+                  throw "llama-server packaged startup smoke test failed: $serverExit"
+              }
+          } finally {
+              Pop-Location
+              $env:PATH = $oldPath
+          }
+
+      - name: Finalize U3 package
+        shell: pwsh
+        run: |
+          $dst = '.\moe-u3-package'
+
           @'
           Branch: agent/static-moe-expert-placement
           Commit: ${{ github.sha }}
           CUDA: 13.3
           CUDA architecture: 120
           Build: targeted static llama-server + U2/U3 validators
-          Purpose: end-to-end static mixed CPU/CUDA MoE inference validation
+          Fixes: guarded MMVQ -1 IDs and idempotent GGML terminate initialization
+          Startup validation: packaged checker, planner and server executed with packaged CUDA DLLs
           Supported targets: Qwen3.5/3.6 MoE Q4_K_M and Q5_K_M, one NVIDIA GPU
 
           Run once per quant from this directory:
 
-          .\run-moe-u3.ps1 `
+          .\run-moe-u3.cmd `
             -Model "B:\path\model.gguf" `
             -Plan "B:\path\matching-static-plan.json"
-
-          The runner performs:
-          1. exact compact CPU/GPU byte accounting;
-          2. deterministic stock baseline generation;
-          3. static mixed CPU/CUDA generation;
-          4. exact output comparison;
-          5. CPU and accelerator MUL_MAT_ID execution checks;
-          6. zero routed-weight transfer checks.
 
           Return the generated moe-u3-result-*.zip for each Q4/Q5 run.
           '@ | Set-Content "$dst\U3-BUILD.txt" -Encoding UTF8
 
-          7z a moe-u3-windows-x64-cuda13.3-sm120.zip "$dst\*"
+          Get-ChildItem $dst -File | Sort-Object Name | ForEach-Object {
+            "{0}  {1}" -f ((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()), $_.Name
+          } | Set-Content "$dst\U3-FILES-SHA256.txt" -Encoding UTF8
+
+          7z a moe-u3-windows-x64-cuda13.3-sm120-dll-smoke-fix.zip "$dst\*"
+          Get-FileHash .\moe-u3-windows-x64-cuda13.3-sm120-dll-smoke-fix.zip -Algorithm SHA256 |
+            Format-List | Out-File .\U3-PACKAGE-SHA256.txt -Encoding utf8
 
       - name: Upload U3 package
         uses: actions/upload-artifact@v6
         with:
-          name: moe-u3-windows-x64-cuda13.3-sm120
-          path: moe-u3-windows-x64-cuda13.3-sm120.zip
+          name: moe-u3-windows-x64-cuda13.3-sm120-dll-smoke-fix
+          path: |
+            moe-u3-windows-x64-cuda13.3-sm120-dll-smoke-fix.zip
+            U3-PACKAGE-SHA256.txt
           retention-days: 7
 
       - name: Record U3 build status
