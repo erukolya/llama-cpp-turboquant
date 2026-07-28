@@ -23,7 +23,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== CPU/CUDA symbol locations ==='
-          grep -RInE 'ggml_compute_forward_mul_mat_id|forward_mul_mat_id|mul_mat_id' ggml/src/ggml-cpu ggml/src/ggml-cuda | head -n 400
-          echo '=== candidate CUDA files ==='
-          find ggml/src/ggml-cuda -maxdepth 2 -type f | sort | grep -Ei 'id|mat|mmq|mmv|moe' | head -n 200
+          {
+            echo '=== CPU/CUDA symbol locations ==='
+            grep -RInE 'ggml_compute_forward_mul_mat_id|forward_mul_mat_id|mul_mat_id' ggml/src/ggml-cpu ggml/src/ggml-cuda | head -n 400
+            echo '=== candidate CUDA files ==='
+            find ggml/src/ggml-cuda -maxdepth 2 -type f | sort | grep -Ei 'id|mat|mmq|mmv|moe' | head -n 200
+          } > backend-locations.txt
+      - name: Upload locations
+        uses: actions/upload-artifact@v4
+        with:
+          name: moe-backend-locations
+          path: backend-locations.txt
+          retention-days: 1
