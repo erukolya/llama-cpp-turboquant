@@ -1,0 +1,120 @@
+name: MoE U3 CUDA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/static-moe-expert-placement
+    paths:
+      - '.github/workflows/moe-u3-cuda.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CMAKE_ARGS: >-
+    -DBUILD_SHARED_LIBS=OFF
+    -DLLAMA_CURL=OFF
+    -DLLAMA_BUILD_EXAMPLES=OFF
+    -DLLAMA_BUILD_TESTS=OFF
+    -DLLAMA_BUILD_TOOLS=ON
+    -DLLAMA_BUILD_SERVER=ON
+    -DGGML_NATIVE=OFF
+    -DGGML_CUDA=ON
+    -DGGML_CUDA_FA_ALL_QUANTS=ON
+    -DCMAKE_CUDA_ARCHITECTURES=120
+
+jobs:
+  windows-cuda-13-3:
+    runs-on: windows-2022
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v6
+        with:
+          ref: agent/static-moe-expert-placement
+          fetch-depth: 1
+
+      - name: Install CUDA 13.3
+        uses: ./.github/actions/windows-setup-cuda
+        with:
+          cuda_version: '13.3'
+
+      - name: Install Ninja
+        shell: pwsh
+        run: choco install ninja --no-progress
+
+      - name: Validate U3 PowerShell
+        shell: pwsh
+        run: |
+          $null = [scriptblock]::Create(
+            (Get-Content .\tools\moe-plan\run-u3.ps1 -Raw -Encoding UTF8))
+
+      - name: Configure targeted U3 build
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          cmake -S . -B build -G "Ninja Multi-Config" %CMAKE_ARGS%
+
+      - name: Build U3 targets
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
+          cmake --build build --config Release -j %NINJA_JOBS% --target llama-server llama-moe-load-check llama-moe-plan-check
+
+      - name: Package U3 validator
+        shell: pwsh
+        run: |
+          $src = '.\build\bin\Release'
+          $dst = '.\moe-u3-package'
+          New-Item -ItemType Directory -Path $dst -Force | Out-Null
+
+          Copy-Item "$src\llama-server.exe" $dst
+          Copy-Item "$src\llama-moe-load-check.exe" $dst
+          Copy-Item "$src\llama-moe-plan-check.exe" $dst
+          Copy-Item '.\tools\moe-plan\run-u3.ps1' "$dst\run-moe-u3.ps1"
+          Copy-Item LICENSE $dst
+
+          robocopy "${{ env.CUDA_PATH }}\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+          robocopy "${{ env.CUDA_PATH }}\lib" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+          robocopy "${{ env.CUDA_PATH }}\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+
+          @'
+          Branch: agent/static-moe-expert-placement
+          Commit: ${{ github.sha }}
+          CUDA: 13.3
+          CUDA architecture: 120
+          Build: targeted static llama-server + U2/U3 validators
+          Purpose: end-to-end static mixed CPU/CUDA MoE inference validation
+          Supported targets: Qwen3.5/3.6 MoE Q4_K_M and Q5_K_M, one NVIDIA GPU
+
+          Run once per quant from this directory:
+
+          .\run-moe-u3.ps1 `
+            -Model "B:\path\model.gguf" `
+            -Plan "B:\path\matching-static-plan.json"
+
+          The runner performs:
+          1. exact compact CPU/GPU byte accounting;
+          2. deterministic stock baseline generation;
+          3. static mixed CPU/CUDA generation;
+          4. exact output comparison;
+          5. CPU and accelerator MUL_MAT_ID execution checks;
+          6. zero routed-weight transfer checks.
+
+          Return the generated moe-u3-result-*.zip for each Q4/Q5 run.
+          '@ | Set-Content "$dst\U3-BUILD.txt" -Encoding UTF8
+
+          7z a moe-u3-windows-x64-cuda13.3-sm120.zip "$dst\*"
+
+      - name: Upload U3 package
+        uses: actions/upload-artifact@v6
+        with:
+          name: moe-u3-windows-x64-cuda13.3-sm120
+          path: moe-u3-windows-x64-cuda13.3-sm120.zip
+          retention-days: 7
