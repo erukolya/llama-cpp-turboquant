@@ -11,6 +11,8 @@ Detailed design and results:
 - `docs/moe-expert-placement-user-checks.md`
 - `docs/moe-u1-results.md`
 - `docs/moe-u2-results.md`
+- `docs/moe-u3-package-manifest.json`
+- `docs/moe-u3-final-package.sha256`
 
 Active work:
 
@@ -30,17 +32,17 @@ Active work:
 
 ## User involvement
 
-**Current status: USER NOT NEEDED.**
+**Current status: USER CHECK REQUIRED.**
 
-The V1.3 mixed execution graph, server integration, backend route remap and guarded missing-slot execution are implemented. Windows and Ubuntu tests execute the real I32 route-map operation and guarded `MUL_MAT_ID(-1)` path. The dedicated Windows CUDA 13.3 U3 artifact is currently being built.
+The final Windows CUDA 13.3 SM120 U3 artifact is built, repacked with the current TurboQuant runner and verified by manifest. The package contains `llama-server.exe`, both model/plan validators, CUDA runtime libraries, `run-moe-u3.cmd`, `run-moe-u3.ps1`, build metadata and per-file SHA-256 hashes.
 
-The next user action is one U3 command for Q4_K_M and one for Q5_K_M after the artifact is ready. Each command produces a diagnostic ZIP automatically.
+Run U3 once with the matching Q4_K_M model/plan and once with the matching Q5_K_M model/plan. Each run creates a diagnostic ZIP automatically even when a gate fails. Return both ZIP files; do not manually inspect or filter their contents.
 
 Hardware checkpoints:
 
 1. **U1 — complete:** exact model/plan dry run on Q5_K_M and Q4_K_M.
 2. **U2 — accepted for Q5_K_M:** exact exclusive split-loader accounting. Q4_K_M structurally confirmed compact pools and zero packed tensors; its uploaded run used the Q5 plan.
-3. **U3 — artifact building:** end-to-end baseline/static output, backend execution, zero weight-transfer and memory checks on both Q4_K_M and Q5_K_M.
+3. **U3 — artifact ready, user validation required:** end-to-end baseline/static output, TurboQuant KV, backend execution, zero weight-transfer and memory checks on both Q4_K_M and Q5_K_M.
 
 ## Mandatory invariants
 
@@ -56,9 +58,9 @@ Hardware checkpoints:
 
 ## Current project state
 
-**Current phase:** V1.3 implementation complete; U3 integration and hardware acceptance active.
+**Current phase:** V1.3 implementation complete; final U3 hardware acceptance active.
 
-Qwen3.5/3.6 MoE now claims packed routed tensors only as GGUF slice sources, allocates model-owned compact CPU and CUDA pools, and loads quantized expert slices without creating persistent packed runtime tensors. The router and top-k selection run once. Backend-local IDs are obtained from immutable I32 route maps, CPU and CUDA compact pools execute separate expert branches, and their weighted contributions are joined once with the result retained on the GPU side.
+Qwen3.5/3.6 MoE claims packed routed tensors only as GGUF slice sources, allocates model-owned compact CPU and CUDA pools, and loads quantized expert slices without creating persistent packed runtime tensors. The router and top-k selection run once. Backend-local IDs are obtained from immutable I32 route maps, CPU and CUDA compact pools execute separate expert branches, and their weighted contributions are joined once with the result retained on the GPU side.
 
 The server accepts `--moe-expert-plan` for real inference. Dry-run remains a separate stock-packed validation mode. Static placement disables stock all-expert warmup and exposes these Prometheus counters:
 
@@ -66,7 +68,18 @@ The server accepts `--moe-expert-plan` for real inference. Dry-run remains a sep
 - selective routed-weight bytes and payload bytes;
 - expert slices, grouped copy calls and packed weight inputs.
 
-U3 requires both execution counters to be positive and every routed-weight copy counter to remain exactly zero.
+The final U3 runner uses `K=turbo4`, `V=turbo3`, flash attention, `--parallel 1`, deterministic sampling and exact baseline/static output comparison. U3 requires both execution counters to be positive and every routed-weight copy counter to remain exactly zero.
+
+Final package:
+
+- workflow run: `30345069255`
+- artifact: `moe-u3-windows-x64-cuda13.3-sm120-final`
+- artifact ID: `8682587151`
+- artifact retention: through 2026-08-04
+- inner ZIP SHA-256: `3abe5b516a60ea511207a6ccafc098a18beeeb9387b79d93a493baad37eacfb1`
+- source binary build run: `30339798181`
+- source binary commit: `601163ec2ec76901eb5684efede37e9fbf580ed8`
+- runner commit used for repack: `9a7706d1efa41678fdbc6f56fdd9f726bbb618d3`
 
 ## Accepted U1 results
 
@@ -136,7 +149,7 @@ Q4 adds 862 hot experts, improves estimated GPU coverage by 6.806 percentage poi
 - [x] Windows CUDA 13.3 U2 artifact.
 - [x] Q5_K_M exact U2 accounting, zero packed tensors and unload accepted.
 - [x] Q4_K_M compact pools and zero packed tensors structurally confirmed.
-- [~] Optional Q4_K_M exact matching-plan accounting rerun; final U3 covers it.
+- [~] Q4_K_M exact matching-plan accounting is included in final U3.
 
 **V1.2 exit gate:** passed for Q5_K_M; storage implementation structurally passed for Q4_K_M.
 
@@ -155,17 +168,17 @@ Q4 adds 862 hot experts, improves estimated GPU coverage by 6.806 percentage poi
 - [x] Join CPU and GPU weighted contributions exactly once.
 - [x] Add host slot/weight/sum tests on Windows and Ubuntu.
 - [x] Add real backend I32 remap and guarded `MUL_MAT_ID(-1)` tests on Windows and Ubuntu.
-- [~] End-to-end baseline/static output equality and real CUDA execution: U3 pending.
+- [!] End-to-end baseline/static output equality and real CUDA execution: final U3 required.
 
-**V1.3 implementation gate: passed. Hardware correctness gate: U3 pending.**
+**V1.3 implementation gate: passed. Hardware correctness gate: U3 ready.**
 
 ## V1.4 — Parallel CPU/CUDA execution
 
-- [ ] Add synthetic fork-and-join timing test.
-- [~] Determine scheduler overlap behavior on the real mixed graph during U3.
+- [ ] Add synthetic fork-and-join timing test if U3 measurements require it.
+- [!] Determine scheduler overlap behavior on the real mixed graph during U3.
 - [ ] Use pinned activation/result buffers and asynchronous events if measurements require them.
-- [ ] Avoid unnecessary per-layer synchronization.
-- [ ] Add CPU/GPU/join timing.
+- [ ] Avoid unnecessary per-layer synchronization if measurements expose it.
+- [ ] Add CPU/GPU/join timing after functional U3 acceptance.
 - [ ] Confirm mixed time approaches `max(CPU, GPU)` rather than their sum.
 
 ## V1.5 — Integration and metrics
@@ -174,21 +187,20 @@ Q4 adds 862 hot experts, improves estimated GPU coverage by 6.806 percentage poi
 - [x] Preserve a separate stock-packed dry-run validator.
 - [x] Disable all-expert warmup for static placement.
 - [x] Expose CPU/accelerator execution and routed-weight copy counters through `/metrics`.
-- [~] Confirm routed-expert weight-transfer counters remain zero during real decode: U3 pending.
-- [~] Preserve TurboQuant KV behavior: final server test pending.
-- [ ] Benchmark PP and TG separately.
-- [ ] Compare current layer placement against static per-expert placement.
-- [ ] Measure RAM, VRAM and PCIe traffic.
+- [!] Confirm routed-expert weight-transfer counters remain zero during real decode: U3 required.
+- [!] Validate TurboQuant KV `turbo4/turbo3` with flash attention: U3 required.
+- [!] Benchmark PP and TG through U3.
+- [!] Measure RAM, VRAM and PCIe counters through U3.
 
 ## V1.6 — Production acceptance
 
-- [~] Validate startup, generation, shutdown and unload through the U3 runner.
-- [ ] Validate long-running server operation.
+- [!] Validate startup, generation, shutdown and unload through the U3 runner.
+- [ ] Validate long-running server operation after functional U3 acceptance.
 - [x] Implement and test `--parallel 1` U3 configuration.
-- [ ] Reject unsupported multi-GPU/RPC/backend combinations explicitly.
-- [~] Validate no-plan stock behavior and strict plan mode through U3.
-- [~] Document supported models, quants, backends and workflow.
-- [~] Build the Windows CUDA 13.3 U3 artifact.
+- [ ] Reject additional unsupported multi-GPU/RPC/backend combinations explicitly where needed.
+- [!] Validate no-plan stock behavior and strict plan mode through U3.
+- [x] Document supported models, quants, backends and workflow.
+- [x] Build and verify the final Windows CUDA 13.3 U3 artifact.
 - [!] Run final U3 on Q4_K_M and Q5_K_M.
 
 ## Version 1 acceptance gate
@@ -228,14 +240,8 @@ Do not implement on the current branch:
 - Added guarded negative route slots to generic CPU, x86 repack and CUDA `MUL_MAT_ID` paths.
 - Added Windows and Ubuntu host partition, backend I32 remap and guarded missing-slot tests.
 - Fixed Release tests that incorrectly depended on side effects inside `assert()`.
-- Enabled real `llama-server --moe-expert-plan` inference while retaining dry-run validation.
-- Disabled all-expert warmup for static placement.
-- Exposed MoE execution and routed-weight copy counters through `/metrics`.
-- Added `run-u3.ps1` for exact U2 accounting, deterministic baseline/static generation, output equality, backend execution and zero-copy checks.
-- Started the targeted Windows CUDA 13.3 SM120 U3 artifact build.
-
-## 2026-07-27
-
-- Accepted U1 for Q5_K_M and Q4_K_M on RTX 5070 Ti.
-- Added exact Q5/Q4 placement comparison in `docs/moe-u1-results.md`.
-- Started V1.2 with deterministic global-to-local CPU/GPU location tables and byte accounting.
+- Enabled real static-plan server inference and disabled stock all-expert warmup for static placement.
+- Exposed MoE execution and routed-weight transfer counters through `/metrics`.
+- Built Windows CUDA 13.3 SM120 U3 binaries successfully in run `30339798181`.
+- Repacked the verified binaries with the current TurboQuant `turbo4/turbo3` runner and `.cmd` wrapper in run `30345069255`.
+- Recorded final package file hashes and ZIP SHA-256 for reproducibility.
