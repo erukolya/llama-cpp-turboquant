@@ -1,6 +1,7 @@
 #include "llama-moe-route-partition.h"
 
 #include <cassert>
+#include <cmath>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -41,6 +42,64 @@ void test_mixed_partition_preserves_slots() {
 
     for (size_t index = 0; index < cpu_ids.size(); ++index) {
         assert((cpu_ids[index] >= 0) != (gpu_ids[index] >= 0));
+    }
+}
+
+void test_partition_preserves_router_weights_and_sum() {
+    llama_moe_load_layer_placement placement;
+    placement.layer = 9;
+    placement.expert_count = 4;
+    placement.cpu_expert_count = 2;
+    placement.gpu_expert_count = 2;
+    placement.global_to_local = {cpu(0), gpu(0), cpu(1), gpu(1)};
+
+    llama_moe_route_maps maps;
+    std::string error;
+    assert(llama_moe_route_maps_build(placement, maps, error));
+
+    constexpr size_t top_k = 3;
+    constexpr size_t token_count = 2;
+    const int32_t selected[top_k * token_count] = {
+        3, 0, 2,
+        1, 3, 0,
+    };
+    const float weights[top_k * token_count] = {
+        0.50f, 0.30f, 0.20f,
+        0.60f, 0.25f, 0.15f,
+    };
+
+    // Synthetic scalar output for each global expert. Local pool ordering follows
+    // the placement above: CPU [global 0, global 2], GPU [global 1, global 3].
+    const float global_output[] = {10.0f, 20.0f, 30.0f, 40.0f};
+    const float cpu_output[] = {10.0f, 30.0f};
+    const float gpu_output[] = {20.0f, 40.0f};
+
+    std::vector<int32_t> cpu_ids;
+    std::vector<int32_t> gpu_ids;
+    assert(llama_moe_route_partition_selected(
+        maps, selected, top_k * token_count, cpu_ids, gpu_ids, error));
+
+    for (size_t token = 0; token < token_count; ++token) {
+        float original = 0.0f;
+        float cpu_branch = 0.0f;
+        float gpu_branch = 0.0f;
+
+        for (size_t slot = 0; slot < top_k; ++slot) {
+            const size_t index = token * top_k + slot;
+            const int32_t global_id = selected[index];
+            const float weight = weights[index];
+
+            original += weight * global_output[global_id];
+
+            if (cpu_ids[index] >= 0) {
+                cpu_branch += weight * cpu_output[cpu_ids[index]];
+            }
+            if (gpu_ids[index] >= 0) {
+                gpu_branch += weight * gpu_output[gpu_ids[index]];
+            }
+        }
+
+        assert(std::fabs(original - (cpu_branch + gpu_branch)) < 1e-6f);
     }
 }
 
@@ -121,6 +180,7 @@ void test_invalid_selected_id_is_rejected_without_partial_output() {
 
 int main() {
     test_mixed_partition_preserves_slots();
+    test_partition_preserves_router_weights_and_sum();
     test_all_cpu_and_all_gpu();
     test_invalid_maps_are_rejected();
     test_invalid_selected_id_is_rejected_without_partial_output();
