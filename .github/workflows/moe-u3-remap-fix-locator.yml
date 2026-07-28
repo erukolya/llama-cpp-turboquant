@@ -9,27 +9,21 @@ on:
 
 permissions:
   actions: read
-  contents: write
+  pull-requests: write
 
 jobs:
   locate:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: agent/static-moe-expert-placement
-          fetch-depth: 0
-      - name: Record final remap V2 runs
+      - name: Report final remap V2 runs
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/moe-u3-final-remap-build-v2.yml/runs?branch=agent%2Fstatic-moe-expert-placement&per_page=10" \
-            --jq '{runs: [.workflow_runs[] | {id, status, conclusion, head_sha, created_at, updated_at, html_url}]}' \
-            > .github/moe-u3-final-remap-build-v2-runs.json
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/moe-u3-final-remap-build-v2-runs.json
-          git commit -m 'ci: record final MoE remap V2 run'
-          git pull --rebase origin agent/static-moe-expert-placement
-          git push origin HEAD:agent/static-moe-expert-placement
+          {
+            echo '<!-- moe-u3-final-remap-build-v2-status -->'
+            echo '### MoE U3 final remap V2 workflow runs'
+            gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/moe-u3-final-remap-build-v2.yml/runs?branch=agent%2Fstatic-moe-expert-placement&per_page=5" \
+              --jq '.workflow_runs[] | "- run `\(.id)`: **\(.status)** / `\(.conclusion // "pending")`, head `\(.head_sha)`, \(.html_url)"'
+          } > /tmp/status.md
+          gh pr comment 2 --repo "$GITHUB_REPOSITORY" --body-file /tmp/status.md
