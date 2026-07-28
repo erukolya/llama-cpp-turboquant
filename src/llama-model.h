@@ -308,6 +308,18 @@ struct llama_layer {
     struct ggml_tensor * ffn_down_exps     = nullptr;
     struct ggml_tensor * ffn_up_exps       = nullptr;
     struct ggml_tensor * ffn_gate_up_exps  = nullptr;
+
+    // Static MoE compact tensors. These are metadata pointers into the
+    // model-owned CPU/GPU storage buffers, not additional weight copies.
+    struct ggml_tensor * ffn_gate_exps_cpu    = nullptr;
+    struct ggml_tensor * ffn_gate_exps_gpu    = nullptr;
+    struct ggml_tensor * ffn_down_exps_cpu    = nullptr;
+    struct ggml_tensor * ffn_down_exps_gpu    = nullptr;
+    struct ggml_tensor * ffn_up_exps_cpu      = nullptr;
+    struct ggml_tensor * ffn_up_exps_gpu      = nullptr;
+    struct ggml_tensor * ffn_gate_up_exps_cpu = nullptr;
+    struct ggml_tensor * ffn_gate_up_exps_gpu = nullptr;
+
     struct ggml_tensor * ffn_gate_inp_b    = nullptr;
     struct ggml_tensor * ffn_gate_exps_b   = nullptr;
     struct ggml_tensor * ffn_down_exps_b   = nullptr;

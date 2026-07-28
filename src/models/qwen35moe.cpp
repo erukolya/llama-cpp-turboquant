@@ -51,8 +51,6 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
 
     const auto * static_placement = moe_placement();
     llama_moe_compact_registry compact_registry;
-    std::vector<ggml_tensor *> compact_cpu_slots;
-    std::vector<ggml_tensor *> compact_gpu_slots;
     ggml_backend_dev_t compact_gpu_device = nullptr;
 
     if (static_placement != nullptr) {
@@ -84,11 +82,13 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
                 "static MoE compact loading requires one dedicated GPU device");
         }
 
-        compact_cpu_slots.reserve(static_cast<size_t>(n_layer) * 3);
-        compact_gpu_slots.reserve(static_cast<size_t>(n_layer) * 3);
     }
 
-    auto register_compact_source = [&](int il, const ggml_tensor * source) {
+    auto register_compact_source = [&] (
+            int il,
+            const ggml_tensor * source,
+            ggml_tensor ** cpu_slot,
+            ggml_tensor ** gpu_slot) {
         if (static_placement == nullptr || source == nullptr) {
             throw std::runtime_error("invalid compact MoE source registration");
         }
@@ -98,12 +98,13 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
                 "static MoE placement has no mapping for layer " + std::to_string(il));
         }
 
-        compact_cpu_slots.push_back(nullptr);
-        compact_gpu_slots.push_back(nullptr);
+        if (cpu_slot == nullptr || gpu_slot == nullptr) {
+            throw std::runtime_error("compact MoE layer destination slot is null");
+        }
         std::string compact_error;
         if (!compact_registry.add(
                 source, il, *layer_placement,
-                &compact_cpu_slots.back(), &compact_gpu_slots.back(), compact_error)) {
+                cpu_slot, gpu_slot, compact_error)) {
             throw std::runtime_error(
                 "cannot register compact routed tensor '" + std::string(source->name) + "': " + compact_error);
         }
@@ -173,20 +174,30 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
             const auto down_name = tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", il).str();
             const ggml_tensor * down_source = ml.claim_tensor_for_slices(
                 down_name, std::vector<int64_t>{ n_ff_exp, n_embd, n_expert });
-            register_compact_source(il, down_source);
+            register_compact_source(
+                il, down_source,
+                &layer.ffn_down_exps_cpu, &layer.ffn_down_exps_gpu);
 
             const auto gate_up_name = tn(LLM_TENSOR_FFN_GATE_UP_EXPS, "weight", il).str();
             const ggml_tensor * gate_up_source = ml.claim_tensor_for_slices(
                 gate_up_name, std::vector<int64_t>{ n_embd, n_ff_exp * 2, n_expert }, false);
             if (gate_up_source != nullptr) {
-                register_compact_source(il, gate_up_source);
+                register_compact_source(
+                    il, gate_up_source,
+                    &layer.ffn_gate_up_exps_cpu, &layer.ffn_gate_up_exps_gpu);
             } else {
                 const auto gate_name = tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", il).str();
                 const auto up_name = tn(LLM_TENSOR_FFN_UP_EXPS, "weight", il).str();
-                register_compact_source(il, ml.claim_tensor_for_slices(
-                    gate_name, std::vector<int64_t>{ n_embd, n_ff_exp, n_expert }));
-                register_compact_source(il, ml.claim_tensor_for_slices(
-                    up_name, std::vector<int64_t>{ n_embd, n_ff_exp, n_expert }));
+                register_compact_source(
+                    il,
+                    ml.claim_tensor_for_slices(
+                        gate_name, std::vector<int64_t>{ n_embd, n_ff_exp, n_expert }),
+                    &layer.ffn_gate_exps_cpu, &layer.ffn_gate_exps_gpu);
+                register_compact_source(
+                    il,
+                    ml.claim_tensor_for_slices(
+                        up_name, std::vector<int64_t>{ n_embd, n_ff_exp, n_expert }),
+                    &layer.ffn_up_exps_cpu, &layer.ffn_up_exps_gpu);
             }
         }
 
