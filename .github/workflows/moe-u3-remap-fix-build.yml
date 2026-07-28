@@ -25,42 +25,34 @@ jobs:
           ref: agent/static-moe-expert-placement
           fetch-depth: 0
 
-      - name: Patch route remap, regression test and U2 cleanup
+      - name: Patch route remap and regression test
         shell: python
         run: |
           from pathlib import Path
+          import re
 
           qwen = Path('src/models/qwen35moe.cpp')
           text = qwen.read_text(encoding='utf-8')
-          old = '''            ggml_tensor * global_ids = ggml_reshape_1d(
-                  ctx0,
-                  global_routing.selected_experts,
-                  ggml_nelements(global_routing.selected_experts));
-              ggml_tensor * local_ids = ggml_get_rows(ctx0, route_map, global_ids);
-              local_ids = ggml_reshape_2d(ctx0, local_ids, n_expert_used, n_tokens);'''
-          new = '''            // argsort_top_k may return a non-contiguous tensor. ggml_get_rows
-              // accepts the original [top_k, tokens] ID layout directly, so do
-              // not flatten it through ggml_reshape_1d.
+          pattern = re.compile(
+              r'\s*ggml_tensor \* global_ids = ggml_reshape_1d\(\s*'
+              r'ctx0,\s*global_routing\.selected_experts,\s*'
+              r'ggml_nelements\(global_routing\.selected_experts\)\);\s*'
+              r'ggml_tensor \* local_ids = ggml_get_rows\(ctx0, route_map, global_ids\);\s*'
+              r'local_ids = ggml_reshape_2d\(ctx0, local_ids, n_expert_used, n_tokens\);')
+          replacement = '''
+              // argsort_top_k may return a non-contiguous tensor. ggml_get_rows
+              // accepts the original [top_k, tokens] ID layout directly.
               ggml_tensor * local_ids = ggml_get_rows(
                   ctx0, route_map, global_routing.selected_experts);
               local_ids = ggml_reshape_2d(ctx0, local_ids, n_expert_used, n_tokens);'''
-          if old not in text:
-              raise SystemExit('qwen35moe remap block not found')
-          qwen.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'qwen35moe remap replacements={count}')
+          qwen.write_text(text, encoding='utf-8')
 
           test = Path('tests/test-moe-route-remap.cpp')
           text = test.read_text(encoding='utf-8')
-          old = '''    ggml_tensor * flat_ids = ggml_reshape_1d(ctx, global_ids, ggml_nelements(global_ids));
-              ggml_tensor * local_flat = ggml_get_rows(ctx, route_map, flat_ids);
-              ggml_tensor * local_ids = ggml_reshape_2d(ctx, local_flat, n_used, n_tokens);'''
-          new = '''    ggml_tensor * local_rows = ggml_get_rows(ctx, route_map, global_ids);
-              ggml_tensor * local_ids = ggml_reshape_2d(ctx, local_rows, n_used, n_tokens);'''
-          if old not in text:
-              raise SystemExit('existing remap test block not found')
-          text = text.replace(old, new, 1)
-
-          marker = 'void test_mul_mat_id_missing_slots(ggml_backend_t cpu) {'
-          regression = r'''void test_argsort_route_remap(ggml_backend_t cpu) {
+          function = r'''void test_route_remap(ggml_backend_t cpu) {
               ggml_context * ctx = make_context();
 
               constexpr int64_t n_expert = 6;
@@ -72,6 +64,8 @@ jobs:
               ggml_set_input(route_map);
               ggml_set_input(scores);
 
+              // This mirrors production: argsort_top_k can produce a non-contiguous
+              // selected-expert tensor, which must be passed directly to GET_ROWS.
               ggml_tensor * selected = ggml_argsort_top_k(ctx, scores, n_used);
               ggml_tensor * local_rows = ggml_get_rows(ctx, route_map, selected);
               ggml_tensor * local_ids = ggml_reshape_2d(ctx, local_rows, n_used, n_tokens);
@@ -81,8 +75,7 @@ jobs:
               ggml_build_forward_expand(graph, local_ids);
 
               ggml_backend_sched_t sched = make_scheduler(cpu);
-              require(ggml_backend_sched_alloc_graph(sched, graph),
-                  "failed to allocate argsort remap graph");
+              require(ggml_backend_sched_alloc_graph(sched, graph), "failed to allocate remap graph");
 
               const std::array<int32_t, n_expert> map = { 0, -1, 1, -1, 2, -1 };
               const std::array<float, n_expert * n_tokens> score_data = {
@@ -98,39 +91,35 @@ jobs:
               ggml_backend_tensor_set(scores, score_data.data(), 0, sizeof(score_data));
               require(
                   ggml_backend_sched_graph_compute(sched, graph) == GGML_STATUS_SUCCESS,
-                  "argsort remap graph computation failed");
+                  "remap graph computation failed");
               ggml_backend_sched_synchronize(sched);
 
               std::array<int32_t, n_used * n_tokens> actual = {};
               ggml_backend_tensor_get(local_ids, actual.data(), 0, sizeof(actual));
-              require(actual == expected,
-                  "argsort route remap differs from expected slot-preserving mapping");
+              require(actual == expected, "backend remap differs from expected slot-preserving mapping");
 
               ggml_backend_sched_free(sched);
               ggml_free(ctx);
           }
 
           '''
-          if marker not in text:
-              raise SystemExit('test insertion marker not found')
-          text = text.replace(marker, regression + marker, 1)
-          old_call = '''    test_route_remap(cpu);
-              test_mul_mat_id_missing_slots(cpu);'''
-          new_call = '''    test_route_remap(cpu);
-              test_argsort_route_remap(cpu);
-              test_mul_mat_id_missing_slots(cpu);'''
-          if old_call not in text:
-              raise SystemExit('test main call block not found')
-          test.write_text(text.replace(old_call, new_call, 1), encoding='utf-8')
+          text, count = re.subn(
+              r'void test_route_remap\(ggml_backend_t cpu\) \{.*?\n\}\n\n(?=void test_mul_mat_id_missing_slots)',
+              function,
+              text,
+              count=1,
+              flags=re.S)
+          if count != 1:
+              raise SystemExit(f'route-remap test replacements={count}')
+          test.write_text(text, encoding='utf-8')
 
           u2 = Path('tools/moe-plan/u2-main.cpp')
           text = u2.read_text(encoding='utf-8')
-          old = '''    llama_backend_free();
-              return result;'''
-          new = '''    // This is a one-shot validator. On Windows CUDA, global backend
-              // teardown can fault after the model and compact pools have already been
-              // released and all acceptance markers were emitted. Let process exit
-              // reclaim global backend state instead of converting success into a crash.
+          old = '\n    llama_backend_free();\n    return result;'
+          new = '''
+              // One-shot validator: all model-owned buffers are already released.
+              // Avoid a Windows CUDA global-backend teardown fault after success;
+              // process exit reclaims the remaining global backend state.
               return result;'''
           if old not in text:
               raise SystemExit('U2 cleanup block not found')
@@ -138,15 +127,16 @@ jobs:
 
           runner = Path('tools/moe-plan/run-u3.ps1')
           text = runner.read_text(encoding='utf-8')
-          old = '''    $checks.u2_exit_zero = $u2Process.ExitCode -eq 0
-              $checks.u2_accounting_ok = $u2Combined.Contains("moe_u2: accounting=ok")
-              $checks.u2_packed_runtime_zero = $u2Combined.Contains("moe_u2: packed_runtime_tensors=0")
-              $checks.u2_unloaded = $u2Combined.Contains("moe_u2: unloaded")
-              if (-not ($checks.u2_exit_zero -and $checks.u2_accounting_ok -and
-                        $checks.u2_packed_runtime_zero -and $checks.u2_unloaded)) {
-                  throw "Exact U2 compact-pool validation failed"
-              }'''
-          new = '''    $checks.u2_exit_code = [int64] $u2Process.ExitCode
+          pattern = re.compile(
+              r'    \$checks\.u2_exit_zero = \$u2Process\.ExitCode -eq 0\n'
+              r'    \$checks\.u2_accounting_ok = .*?\n'
+              r'    \$checks\.u2_packed_runtime_zero = .*?\n'
+              r'    \$checks\.u2_unloaded = .*?\n'
+              r'    if \(-not \(\$checks\.u2_exit_zero -and \$checks\.u2_accounting_ok -and\n'
+              r'              \$checks\.u2_packed_runtime_zero -and \$checks\.u2_unloaded\)\) \{\n'
+              r'        throw "Exact U2 compact-pool validation failed"\n'
+              r'    \}')
+          replacement = '''    $checks.u2_exit_code = [int64] $u2Process.ExitCode
               $checks.u2_exit_zero = $u2Process.ExitCode -eq 0
               $checks.u2_accounting_ok = $u2Combined.Contains("moe_u2: accounting=ok")
               $checks.u2_packed_runtime_zero = $u2Combined.Contains("moe_u2: packed_runtime_tensors=0")
@@ -157,21 +147,17 @@ jobs:
                   throw "Exact U2 compact-pool validation failed"
               }
               if (-not $checks.u2_exit_zero) {
-                  Write-Warning "U2 emitted all acceptance markers but exited with code $($u2Process.ExitCode) during process cleanup"
+                  Write-Warning "U2 acceptance markers passed; cleanup exit code=$($u2Process.ExitCode)"
               }'''
-          if old not in text:
-              raise SystemExit('U3 U2 gate block not found')
-          runner.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'U3 runner replacements={count}')
+          runner.write_text(text, encoding='utf-8')
 
-      - name: Configure route-remap regression test
-        run: >-
-          cmake -S . -B build-fast -G Ninja
-          -DLLAMA_CURL=OFF
-          -DLLAMA_BUILD_TESTS=ON
-          -DLLAMA_BUILD_SERVER=OFF
-          -DGGML_NATIVE=OFF
+      - name: Configure regression test
+        run: cmake -S . -B build-fast -G Ninja -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=ON -DLLAMA_BUILD_SERVER=OFF -DGGML_NATIVE=OFF
 
-      - name: Build and run route-remap regression test
+      - name: Build and run regression test
         run: |
           cmake --build build-fast -j 2 --target test-moe-route-remap
           ./build-fast/bin/test-moe-route-remap
@@ -192,8 +178,7 @@ jobs:
     needs: patch-and-test
     runs-on: windows-2022
     steps:
-      - name: Checkout verified fix
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           ref: agent/static-moe-expert-placement
           fetch-depth: 0
@@ -202,12 +187,8 @@ jobs:
         shell: pwsh
         run: |
           $source = Get-Content '.\src\models\qwen35moe.cpp' -Raw
-          if ($source.Contains('ggml_reshape_1d(' + "`n" + '                ctx0,' + "`n" + '                global_routing.selected_experts')) {
-              throw 'Non-contiguous route reshape is still present'
-          }
-          if (-not $source.Contains('ctx0, route_map, global_routing.selected_experts')) {
-              throw 'Direct top-k route remap is missing'
-          }
+          if ($source.Contains('global_ids = ggml_reshape_1d')) { throw 'Old route reshape remains' }
+          if (-not $source.Contains('ctx0, route_map, global_routing.selected_experts')) { throw 'Direct route remap missing' }
 
       - name: Install CUDA 13.3
         uses: ./.github/actions/windows-setup-cuda
@@ -231,7 +212,7 @@ jobs:
           set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
           cmake --build build --config Release -j %NINJA_JOBS% --target llama-server llama-moe-load-check llama-moe-plan-check
 
-      - name: Package patched U3 validator
+      - name: Package patched U3
         shell: pwsh
         run: |
           $src = '.\build\bin\Release'
@@ -255,7 +236,7 @@ jobs:
           "@ | Set-Content "$dst\U3-BUILD.txt" -Encoding UTF8
           7z a moe-u3-windows-x64-cuda13.3-sm120-remap-fix.zip "$dst\*"
 
-      - name: Upload patched U3 package
+      - name: Upload patched U3
         uses: actions/upload-artifact@v6
         with:
           name: moe-u3-windows-x64-cuda13.3-sm120-remap-fix
