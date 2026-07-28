@@ -1,12 +1,24 @@
 #include "llama-moe-route-partition.h"
 
-#include <cassert>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <vector>
 
 namespace {
+
+void require(bool condition, const char * expression, const char * file, int line) {
+    if (!condition) {
+        std::fprintf(stderr,
+            "test-moe-route-partition: check failed at %s:%d: %s\n",
+            file, line, expression);
+        std::exit(1);
+    }
+}
+
+#define CHECK(expression) require((expression), #expression, __FILE__, __LINE__)
 
 llama_moe_load_location cpu(uint32_t local) {
     return {llama_moe_load_backend::cpu, local};
@@ -17,8 +29,8 @@ llama_moe_load_location gpu(uint32_t local) {
 }
 
 void test_route_map_tensor_names() {
-    assert(llama_moe_route_map_tensor_name(7, llama_moe_load_backend::cpu) == "moe.route_map.7.cpu");
-    assert(llama_moe_route_map_tensor_name(7, llama_moe_load_backend::gpu) == "moe.route_map.7.gpu");
+    CHECK(llama_moe_route_map_tensor_name(7, llama_moe_load_backend::cpu) == "moe.route_map.7.cpu");
+    CHECK(llama_moe_route_map_tensor_name(7, llama_moe_load_backend::gpu) == "moe.route_map.7.gpu");
 }
 
 void test_mixed_partition_preserves_slots() {
@@ -31,22 +43,22 @@ void test_mixed_partition_preserves_slots() {
 
     llama_moe_route_maps maps;
     std::string error;
-    assert(llama_moe_route_maps_build(placement, maps, error));
-    assert(error.empty());
-    assert((maps.cpu_local_by_global == std::vector<int32_t>{0, -1, 1, -1}));
-    assert((maps.gpu_local_by_global == std::vector<int32_t>{-1, 0, -1, 1}));
+    CHECK(llama_moe_route_maps_build(placement, maps, error));
+    CHECK(error.empty());
+    CHECK((maps.cpu_local_by_global == std::vector<int32_t>{0, -1, 1, -1}));
+    CHECK((maps.gpu_local_by_global == std::vector<int32_t>{-1, 0, -1, 1}));
 
     const int32_t selected[] = {3, 0, 2, 1, 3, 2};
     std::vector<int32_t> cpu_ids;
     std::vector<int32_t> gpu_ids;
-    assert(llama_moe_route_partition_selected(
+    CHECK(llama_moe_route_partition_selected(
         maps, selected, sizeof(selected) / sizeof(selected[0]), cpu_ids, gpu_ids, error));
-    assert(error.empty());
-    assert((cpu_ids == std::vector<int32_t>{-1, 0, 1, -1, -1, 1}));
-    assert((gpu_ids == std::vector<int32_t>{1, -1, -1, 0, 1, -1}));
+    CHECK(error.empty());
+    CHECK((cpu_ids == std::vector<int32_t>{-1, 0, 1, -1, -1, 1}));
+    CHECK((gpu_ids == std::vector<int32_t>{1, -1, -1, 0, 1, -1}));
 
     for (size_t index = 0; index < cpu_ids.size(); ++index) {
-        assert((cpu_ids[index] >= 0) != (gpu_ids[index] >= 0));
+        CHECK((cpu_ids[index] >= 0) != (gpu_ids[index] >= 0));
     }
 }
 
@@ -60,7 +72,7 @@ void test_partition_preserves_router_weights_and_sum() {
 
     llama_moe_route_maps maps;
     std::string error;
-    assert(llama_moe_route_maps_build(placement, maps, error));
+    CHECK(llama_moe_route_maps_build(placement, maps, error));
 
     constexpr size_t top_k = 3;
     constexpr size_t token_count = 2;
@@ -81,7 +93,7 @@ void test_partition_preserves_router_weights_and_sum() {
 
     std::vector<int32_t> cpu_ids;
     std::vector<int32_t> gpu_ids;
-    assert(llama_moe_route_partition_selected(
+    CHECK(llama_moe_route_partition_selected(
         maps, selected, top_k * token_count, cpu_ids, gpu_ids, error));
 
     for (size_t token = 0; token < token_count; ++token) {
@@ -104,7 +116,7 @@ void test_partition_preserves_router_weights_and_sum() {
             }
         }
 
-        assert(std::fabs(original - (cpu_branch + gpu_branch)) < 1e-6f);
+        CHECK(std::fabs(original - (cpu_branch + gpu_branch)) < 1e-6f);
     }
 }
 
@@ -118,13 +130,13 @@ void test_all_cpu_and_all_gpu() {
     all_cpu.global_to_local = {cpu(0), cpu(1), cpu(2)};
 
     llama_moe_route_maps cpu_maps;
-    assert(llama_moe_route_maps_build(all_cpu, cpu_maps, error));
+    CHECK(llama_moe_route_maps_build(all_cpu, cpu_maps, error));
     const int32_t selected_cpu[] = {2, 0, 1};
     std::vector<int32_t> cpu_ids;
     std::vector<int32_t> gpu_ids;
-    assert(llama_moe_route_partition_selected(cpu_maps, selected_cpu, 3, cpu_ids, gpu_ids, error));
-    assert((cpu_ids == std::vector<int32_t>{2, 0, 1}));
-    assert((gpu_ids == std::vector<int32_t>{-1, -1, -1}));
+    CHECK(llama_moe_route_partition_selected(cpu_maps, selected_cpu, 3, cpu_ids, gpu_ids, error));
+    CHECK((cpu_ids == std::vector<int32_t>{2, 0, 1}));
+    CHECK((gpu_ids == std::vector<int32_t>{-1, -1, -1}));
 
     llama_moe_load_layer_placement all_gpu;
     all_gpu.expert_count = 3;
@@ -133,11 +145,11 @@ void test_all_cpu_and_all_gpu() {
     all_gpu.global_to_local = {gpu(0), gpu(1), gpu(2)};
 
     llama_moe_route_maps gpu_maps;
-    assert(llama_moe_route_maps_build(all_gpu, gpu_maps, error));
+    CHECK(llama_moe_route_maps_build(all_gpu, gpu_maps, error));
     const int32_t selected_gpu[] = {1, 2, 0};
-    assert(llama_moe_route_partition_selected(gpu_maps, selected_gpu, 3, cpu_ids, gpu_ids, error));
-    assert((cpu_ids == std::vector<int32_t>{-1, -1, -1}));
-    assert((gpu_ids == std::vector<int32_t>{1, 2, 0}));
+    CHECK(llama_moe_route_partition_selected(gpu_maps, selected_gpu, 3, cpu_ids, gpu_ids, error));
+    CHECK((cpu_ids == std::vector<int32_t>{-1, -1, -1}));
+    CHECK((gpu_ids == std::vector<int32_t>{1, 2, 0}));
 }
 
 void test_invalid_maps_are_rejected() {
@@ -149,16 +161,16 @@ void test_invalid_maps_are_rejected() {
     duplicate.cpu_expert_count = 2;
     duplicate.gpu_expert_count = 1;
     duplicate.global_to_local = {cpu(0), cpu(0), gpu(0)};
-    assert(!llama_moe_route_maps_build(duplicate, maps, error));
-    assert(error == "duplicate CPU local expert ID");
+    CHECK(!llama_moe_route_maps_build(duplicate, maps, error));
+    CHECK(error == "duplicate CPU local expert ID");
 
     llama_moe_load_layer_placement incomplete;
     incomplete.expert_count = 3;
     incomplete.cpu_expert_count = 1;
     incomplete.gpu_expert_count = 1;
     incomplete.global_to_local = {cpu(0), gpu(0), gpu(0)};
-    assert(!llama_moe_route_maps_build(incomplete, maps, error));
-    assert(error == "route placement CPU/GPU counts do not cover all experts");
+    CHECK(!llama_moe_route_maps_build(incomplete, maps, error));
+    CHECK(error == "route placement CPU/GPU counts do not cover all experts");
 }
 
 void test_invalid_selected_id_is_rejected_without_partial_output() {
@@ -170,15 +182,15 @@ void test_invalid_selected_id_is_rejected_without_partial_output() {
 
     llama_moe_route_maps maps;
     std::string error;
-    assert(llama_moe_route_maps_build(placement, maps, error));
+    CHECK(llama_moe_route_maps_build(placement, maps, error));
 
     const int32_t selected[] = {0, 2};
     std::vector<int32_t> cpu_ids = {99};
     std::vector<int32_t> gpu_ids = {98};
-    assert(!llama_moe_route_partition_selected(maps, selected, 2, cpu_ids, gpu_ids, error));
-    assert(error == "selected global expert ID is out of range");
-    assert((cpu_ids == std::vector<int32_t>{99}));
-    assert((gpu_ids == std::vector<int32_t>{98}));
+    CHECK(!llama_moe_route_partition_selected(maps, selected, 2, cpu_ids, gpu_ids, error));
+    CHECK(error == "selected global expert ID is out of range");
+    CHECK((cpu_ids == std::vector<int32_t>{99}));
+    CHECK((gpu_ids == std::vector<int32_t>{98}));
 }
 
 } // namespace
