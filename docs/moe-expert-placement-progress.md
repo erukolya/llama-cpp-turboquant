@@ -260,3 +260,15 @@ Do not implement on the current branch:
 - Materialized one shared contiguous I32 route tensor before CPU/GPU route-map remap.
 - Added and passed a focused `argsort_top_k -> ggml_cont -> reshape -> GET_ROWS` regression test.
 - Started corrected Windows CUDA 13.3 SM120 artifact build in run `30369033475` from verified commit `c929e579fbe5d459a53a9a00af2611aff954da6c`.
+
+
+## U3 Q5 MMVQ missing-ID diagnosis (2026-07-28)
+
+- Q5 U2 compact accounting and the stock baseline passed.
+- Static inference loaded successfully and failed on the first CUDA graph with `illegal memory access`.
+- Root cause: the optimized quantized MMVQ kernels read the split-route `-1` sentinel as an unsigned expert index (`UINT_MAX`).
+- Fix: keep missing slots mapped to a safe zero index for reads and suppress their writes; the destination is already zeroed by guarded `MUL_MAT_ID`.
+- Both single-token decode and multi-token prompt MMVQ paths are covered.
+- U3 PowerShell now captures the actual U2 process exit code instead of serializing `$null` as zero.
+- Corrected CUDA 13.3 / SM120 package is being built by this workflow.
+- **USER NOT NEEDED** until the corrected artifact is published.
