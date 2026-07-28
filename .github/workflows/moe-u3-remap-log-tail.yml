@@ -19,16 +19,20 @@ jobs:
         with:
           ref: agent/static-moe-expert-placement
           fetch-depth: 0
-      - name: Capture failed job log tail
+      - name: Capture V3 failed job diagnostics
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh api repos/${GITHUB_REPOSITORY}/actions/jobs/90298593374/logs > /tmp/job.log
-          tail -n 140 /tmp/job.log > .github/moe-u3-remap-regression-tail.log
+          gh api repos/${GITHUB_REPOSITORY}/actions/jobs/90300096038/logs > /tmp/job.log
+          {
+            grep -E 'test-moe-route-remap|GGML_ASSERT|FAILED|Error|error:|Aborted|Segmentation|remap graph|argsort|GET_ROWS' /tmp/job.log || true
+            echo '--- tail ---'
+            tail -n 100 /tmp/job.log
+          } > .github/moe-u3-remap-regression-v3.log
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/moe-u3-remap-regression-tail.log
-          git commit -m 'ci: record MoE remap regression failure'
+          git add .github/moe-u3-remap-regression-v3.log
+          git commit -m 'ci: record V3 MoE remap regression failure'
           git pull --rebase origin agent/static-moe-expert-placement
           git push origin HEAD:agent/static-moe-expert-placement
