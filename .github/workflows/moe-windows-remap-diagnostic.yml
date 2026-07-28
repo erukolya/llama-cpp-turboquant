@@ -1,4 +1,4 @@
-name: MoE Windows Remap Diagnostic
+name: MoE Windows Suite Diagnostic
 
 on:
   push:
@@ -19,42 +19,45 @@ jobs:
           ref: agent/static-moe-expert-placement
           fetch-depth: 1
 
-      - name: Configure and build route remap
+      - name: Configure and build MoE suite
         shell: cmd
         run: >-
-          cmake -S . -B build-remap -G "Ninja Multi-Config"
+          cmake -S . -B build-moe-suite -G "Ninja Multi-Config"
           -DCMAKE_TOOLCHAIN_FILE=cmake/x64-windows-llvm.cmake
           -DBUILD_SHARED_LIBS=ON
           -DLLAMA_BUILD_SERVER=OFF
           -DLLAMA_BUILD_EXAMPLES=OFF
           -DLLAMA_BUILD_TOOLS=ON
           -DLLAMA_BUILD_TESTS=ON
-          && cmake --build build-remap --config Release --parallel --target test-moe-route-remap
+          && cmake --build build-moe-suite --config Release --parallel
+          --target
+          test-moe-load-scope
+          test-moe-load-shared
+          test-moe-pool-plan
+          test-moe-storage
+          test-moe-registry
+          test-moe-route-partition
+          test-moe-route-remap
 
-      - name: Run and record route remap result
+      - name: Run and record MoE suite result
         shell: pwsh
         run: |
-          $exe = Get-ChildItem -Path build-remap -Recurse -Filter test-moe-route-remap.exe | Select-Object -First 1
-          if (-not $exe) { throw "test-moe-route-remap.exe not found" }
-
-          $errorLog = Join-Path $PWD "moe-windows-remap-error.txt"
-          $resultLog = Join-Path $PWD "moe-windows-remap-result.txt"
-          & $exe.FullName *> $errorLog
+          $log = Join-Path $PWD "moe-windows-suite-result.txt"
+          ctest --test-dir build-moe-suite -C Release -VV `
+            -R '^test-moe-(load-scope|load-shared|pool-plan|storage|registry|route-partition|route-remap)$' *> $log
           $status = $LASTEXITCODE
+
+          Add-Content $log ""
+          Add-Content $log "exit_code=$status"
 
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-
+          git add moe-windows-suite-result.txt
           if ($status -eq 0) {
-              Remove-Item $errorLog -ErrorAction SilentlyContinue
-              "PASS: test-moe-route-remap completed successfully on windows-2025" | Set-Content $resultLog
-              git add moe-windows-remap-result.txt
-              git commit -m "ci: record Windows MoE remap success"
+              git commit -m "ci: record Windows MoE suite success"
           } else {
-              Get-Content $errorLog
-              git add moe-windows-remap-error.txt
-              git commit -m "ci: capture Windows MoE remap failure"
+              Get-Content $log
+              git commit -m "ci: capture Windows MoE suite failure"
           }
-
           git push origin HEAD:agent/static-moe-expert-placement
           exit $status
