@@ -1,0 +1,246 @@
+name: MoE U3 MMVQ Missing-ID Fix
+
+on:
+  push:
+    branches:
+      - agent/static-moe-expert-placement
+    paths:
+      - '.github/workflows/moe-u3-mmvq-fix-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: moe-u3-mmvq-fix-once
+  cancel-in-progress: false
+
+env:
+  CMAKE_ARGS: >-
+    -DBUILD_SHARED_LIBS=OFF
+    -DLLAMA_CURL=OFF
+    -DLLAMA_BUILD_EXAMPLES=OFF
+    -DLLAMA_BUILD_TESTS=OFF
+    -DLLAMA_BUILD_TOOLS=ON
+    -DLLAMA_BUILD_SERVER=ON
+    -DGGML_NATIVE=OFF
+    -DGGML_CUDA=ON
+    -DGGML_CUDA_FA_ALL_QUANTS=ON
+    -DCMAKE_CUDA_ARCHITECTURES=120
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.publish.outputs.commit }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply MMVQ missing-ID and U3 exit-code fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          mmvq_path = Path('ggml/src/ggml-cuda/mmvq.cu')
+          text = mmvq_path.read_text(encoding='utf-8')
+
+          old = '''    ggml_cuda_pdl_sync();
+              channel_x  = ncols_dst == 1 && ids ? ids[channel_dst]                     : fastdiv(channel_dst, channel_ratio);
+              channel_y  = ncols_dst == 1 && ids ? fastmodulo(channel_dst, nchannels_y) : channel_dst;
+              sample_dst = blockIdx.z;
+          '''
+          new = '''    ggml_cuda_pdl_sync();
+              const int32_t selected_channel = ncols_dst == 1 && ids ? ids[channel_dst] : 0;
+              const bool skip_channel = ncols_dst == 1 && ids && selected_channel < 0;
+              channel_x = ncols_dst == 1 && ids
+                  ? (skip_channel ? 0u : static_cast<uint32_t>(selected_channel))
+                  : fastdiv(channel_dst, channel_ratio);
+              channel_y  = ncols_dst == 1 && ids ? fastmodulo(channel_dst, nchannels_y) : channel_dst;
+              sample_dst = blockIdx.z;
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'single-token MMVQ selector block count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''        if (threadIdx.x < rows_per_cuda_block && (rows_per_cuda_block == 1 || uint32_t(row0 + threadIdx.x) < stride_col_dst)) {
+          '''
+          new = '''        if (!skip_channel && threadIdx.x < rows_per_cuda_block &&
+                      (rows_per_cuda_block == 1 || uint32_t(row0 + threadIdx.x) < stride_col_dst)) {
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'single-token MMVQ write block count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''    ggml_cuda_pdl_sync();
+              const uint32_t channel_x = ids[channel_dst + token_idx * ids_stride];
+              const uint32_t channel_y = fastmodulo(channel_dst, nchannels_y);
+          '''
+          new = '''    ggml_cuda_pdl_sync();
+              const int32_t selected_channel = ids[channel_dst + token_idx * ids_stride];
+              const bool skip_channel = selected_channel < 0;
+              const uint32_t channel_x = skip_channel ? 0u : static_cast<uint32_t>(selected_channel);
+              const uint32_t channel_y = fastmodulo(channel_dst, nchannels_y);
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'multi-token MMVQ selector block count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''    if (threadIdx.x < c_rows_per_block && (c_rows_per_block == 1 || uint32_t(row0 + threadIdx.x) < nrows_x)) {
+          '''
+          new = '''    if (!skip_channel && threadIdx.x < c_rows_per_block &&
+                  (c_rows_per_block == 1 || uint32_t(row0 + threadIdx.x) < nrows_x)) {
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'multi-token MMVQ write block count={text.count(old)}')
+          text = text.replace(old, new, 1)
+          mmvq_path.write_text(text, encoding='utf-8')
+
+          runner_path = Path('tools/moe-plan/run-u3.ps1')
+          runner = runner_path.read_text(encoding='utf-8')
+          old = '''    $Process.WaitForExit()
+          }
+          '''
+          new = '''    $Process.WaitForExit()
+              $Process.Refresh()
+              return [int] $Process.ExitCode
+          }
+          '''
+          if runner.count(old) != 1:
+              raise SystemExit(f'Wait-ProcessExit return block count={runner.count(old)}')
+          runner = runner.replace(old, new, 1)
+
+          old = '''    Wait-ProcessExit `
+                  -Process $u2Process `
+          '''
+          new = '''    $u2ExitCode = Wait-ProcessExit `
+                  -Process $u2Process `
+          '''
+          if runner.count(old) != 1:
+              raise SystemExit(f'U2 Wait-ProcessExit call count={runner.count(old)}')
+          runner = runner.replace(old, new, 1)
+          runner = runner.replace('$checks.u2_exit_code = [int64] $u2Process.ExitCode', '$checks.u2_exit_code = [int64] $u2ExitCode', 1)
+          runner = runner.replace('$checks.u2_exit_zero = $u2Process.ExitCode -eq 0', '$checks.u2_exit_zero = $u2ExitCode -eq 0', 1)
+          runner = runner.replace('cleanup exit code=$($u2Process.ExitCode)', 'cleanup exit code=$u2ExitCode', 1)
+          runner_path.write_text(runner, encoding='utf-8')
+
+          workflow_path = Path('.github/workflows/moe-u3-mmvq-fix-once.yml')
+          workflow_path.unlink()
+
+          progress = Path('docs/moe-expert-placement-progress.md')
+          with progress.open('a', encoding='utf-8') as f:
+              f.write('''\n\n## U3 Q5 MMVQ missing-ID diagnosis (2026-07-28)\n\n- Q5 U2 compact accounting and the stock baseline passed.\n- Static inference loaded successfully and failed on the first CUDA graph with `illegal memory access`.\n- Root cause: the optimized quantized MMVQ kernels read the split-route `-1` sentinel as an unsigned expert index (`UINT_MAX`).\n- Fix: keep missing slots mapped to a safe zero index for reads and suppress their writes; the destination is already zeroed by guarded `MUL_MAT_ID`.\n- Both single-token decode and multi-token prompt MMVQ paths are covered.\n- U3 PowerShell now captures the actual U2 process exit code instead of serializing `$null` as zero.\n- Corrected CUDA 13.3 / SM120 package is being built by this workflow.\n- **USER NOT NEEDED** until the corrected artifact is published.\n''')
+
+      - name: Validate patch structure
+        shell: python
+        run: |
+          from pathlib import Path
+          text = Path('ggml/src/ggml-cuda/mmvq.cu').read_text(encoding='utf-8')
+          assert text.count('const bool skip_channel =') == 2
+          assert text.count('!skip_channel && threadIdx.x <') == 2
+          assert 'const uint32_t channel_x = ids[channel_dst + token_idx * ids_stride];' not in text
+          runner = Path('tools/moe-plan/run-u3.ps1').read_text(encoding='utf-8')
+          assert '$u2ExitCode = Wait-ProcessExit' in runner
+          assert 'cleanup exit code=$u2ExitCode' in runner
+
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $null = [scriptblock]::Create(
+            (Get-Content .\tools\moe-plan\run-u3.ps1 -Raw -Encoding UTF8))
+
+      - name: Publish patch
+        id: publish
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add ggml/src/ggml-cuda/mmvq.cu tools/moe-plan/run-u3.ps1 docs/moe-expert-placement-progress.md .github/workflows/moe-u3-mmvq-fix-once.yml
+          git commit -m "fix(cuda): guard missing MoE IDs in MMVQ kernels"
+          git pull --rebase origin agent/static-moe-expert-placement
+          git push origin HEAD:agent/static-moe-expert-placement
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  windows-cuda-13-3:
+    needs: patch
+    runs-on: windows-2022
+    steps:
+      - name: Checkout exact patch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.patch.outputs.commit }}
+          fetch-depth: 0
+
+      - name: Install CUDA 13.3
+        uses: ./.github/actions/windows-setup-cuda
+        with:
+          cuda_version: '13.3'
+
+      - name: Install Ninja
+        shell: pwsh
+        run: choco install ninja --no-progress
+
+      - name: Validate U3 PowerShell
+        shell: pwsh
+        run: |
+          $null = [scriptblock]::Create(
+            (Get-Content .\tools\moe-plan\run-u3.ps1 -Raw -Encoding UTF8))
+
+      - name: Configure targeted U3 build
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          cmake -S . -B build -G "Ninja Multi-Config" %CMAKE_ARGS%
+
+      - name: Build corrected U3 targets
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
+          cmake --build build --config Release -j %NINJA_JOBS% --target llama-server llama-moe-load-check llama-moe-plan-check
+
+      - name: Package corrected U3 validator
+        shell: pwsh
+        run: |
+          $src = '.\build\bin\Release'
+          $dst = '.\moe-u3-package'
+          New-Item -ItemType Directory -Path $dst -Force | Out-Null
+
+          Copy-Item "$src\llama-server.exe" $dst
+          Copy-Item "$src\llama-moe-load-check.exe" $dst
+          Copy-Item "$src\llama-moe-plan-check.exe" $dst
+          Copy-Item '.\tools\moe-plan\run-u3.ps1' "$dst\run-moe-u3.ps1"
+          Copy-Item '.\tools\moe-plan\run-u3.cmd' "$dst\run-moe-u3.cmd"
+          Copy-Item LICENSE $dst
+
+          robocopy "${{ env.CUDA_PATH }}\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+          robocopy "${{ env.CUDA_PATH }}\lib" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+          robocopy "${{ env.CUDA_PATH }}\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+
+          $commit = (git rev-parse HEAD).Trim()
+          @"
+          Branch: agent/static-moe-expert-placement
+          Commit: $commit
+          CUDA: 13.3
+          CUDA architecture: 120
+          Fix: guarded -1 split-route IDs in single-token and multi-token quantized MMVQ kernels
+          Runner fix: reliable U2 process exit-code capture
+          Models: Qwen3.5/3.6 MoE Q4_K_M and Q5_K_M, one NVIDIA GPU
+          "@ | Set-Content "$dst\U3-BUILD.txt" -Encoding UTF8
+
+          7z a moe-u3-windows-x64-cuda13.3-sm120-mmvq-missing-id-fix.zip "$dst\*"
+          Get-FileHash .\moe-u3-windows-x64-cuda13.3-sm120-mmvq-missing-id-fix.zip -Algorithm SHA256 |
+            Format-List | Out-File .\U3-PACKAGE-SHA256.txt -Encoding utf8
+
+      - name: Upload corrected U3 package
+        uses: actions/upload-artifact@v6
+        with:
+          name: moe-u3-windows-x64-cuda13.3-sm120-mmvq-missing-id-fix
+          path: |
+            moe-u3-windows-x64-cuda13.3-sm120-mmvq-missing-id-fix.zip
+            U3-PACKAGE-SHA256.txt
+          retention-days: 7
