@@ -89,7 +89,12 @@ if (-not $pythonCommand) {
 $script:PythonExe = $pythonCommand.Source
 
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
-    $OutputDir = Join-Path (Get-Location) "moe-u1-result"
+    $modelStem = [System.IO.Path]::GetFileNameWithoutExtension($modelPath)
+    $safeModelStem = [regex]::Replace($modelStem, '[^A-Za-z0-9._-]+', '_').Trim('_')
+    if ([string]::IsNullOrWhiteSpace($safeModelStem)) {
+        $safeModelStem = "model"
+    }
+    $OutputDir = Join-Path (Get-Location) ("moe-u1-result-" + $safeModelStem)
 }
 $outputPath = [System.IO.Path]::GetFullPath($OutputDir)
 if (Test-Path -LiteralPath $outputPath) {
@@ -229,6 +234,7 @@ $summary = [ordered]@{
     checked_at_utc = [DateTime]::UtcNow.ToString("o")
     model = $modelPath
     stats = $statsPath
+    model_fingerprint = [string] $plan.model_fingerprint
     schema_version = [int] $plan.schema_version
     selected_expert_count = [int] $plan.selected_expert_count
     logical_expert_count = [int] $plan.logical_expert_count
