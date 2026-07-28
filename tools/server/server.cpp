@@ -131,8 +131,12 @@ static bool common_params_parse_with_moe_stats(
             }
             g_server_moe_load_placement = std::move(load_placement);
 
+            // Stock warmup routes every expert. That would execute a huge
+            // all-expert mixed graph once and does not validate normal top-k
+            // decode, so static placement uses the real top-k path immediately.
+            params.warmup = false;
             std::fprintf(stderr,
-                "moe_plan: enabled, input '%s', strict=%s, dry_run=false, load_scope=enabled\n",
+                "moe_plan: enabled, input '%s', strict=%s, dry_run=false, load_scope=enabled, warmup=disabled\n",
                 g_server_moe_plan->plan_path().c_str(),
                 g_server_moe_plan->strict() ? "true" : "false");
         }
