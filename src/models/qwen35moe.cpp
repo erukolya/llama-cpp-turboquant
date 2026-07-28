@@ -741,16 +741,18 @@ ggml_tensor * llama_model_qwen35moe::graph::build_layer_ffn(ggml_tensor * cur, c
             il,
             nullptr);
 
+        // ggml_argsort_top_k may produce a non-contiguous view. Materialize
+    // the tiny [top_k, tokens] I32 route tensor once and share it
+    // between the CPU and GPU route-map branches.
+    ggml_tensor * global_ids = ggml_cont(ctx0, global_routing.selected_experts);
+    global_ids = ggml_reshape_1d(ctx0, global_ids, ggml_nelements(global_ids));
+    cb(global_ids, "ffn_moe_global_ids_cont", il);
+
         const auto remap_routing = [&](ggml_tensor * route_map, const char * name) {
             GGML_ASSERT(route_map != nullptr);
             GGML_ASSERT(route_map->type == GGML_TYPE_I32);
             GGML_ASSERT(route_map->ne[0] == 1);
             GGML_ASSERT(route_map->ne[1] == n_expert);
-
-            ggml_tensor * global_ids = ggml_reshape_1d(
-                ctx0,
-                global_routing.selected_experts,
-                ggml_nelements(global_routing.selected_experts));
             ggml_tensor * local_ids = ggml_get_rows(ctx0, route_map, global_ids);
             local_ids = ggml_reshape_2d(ctx0, local_ids, n_expert_used, n_tokens);
             cb(local_ids, name, il);

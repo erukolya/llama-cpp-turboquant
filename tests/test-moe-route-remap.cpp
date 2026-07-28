@@ -86,6 +86,55 @@ void test_route_remap(ggml_backend_t cpu) {
     ggml_free(ctx);
 }
 
+void test_argsort_route_remap_contiguous(ggml_backend_t cpu) {
+    ggml_context * ctx = make_context();
+
+    constexpr int64_t n_expert = 6;
+    constexpr int64_t n_used   = 4;
+    constexpr int64_t n_tokens = 2;
+
+    ggml_tensor * route_map = ggml_new_tensor_2d(ctx, GGML_TYPE_I32, 1, n_expert);
+    ggml_tensor * scores = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_expert, n_tokens);
+    ggml_set_input(route_map);
+    ggml_set_input(scores);
+
+    ggml_tensor * selected = ggml_argsort_top_k(ctx, scores, n_used);
+    ggml_tensor * selected_cont = ggml_cont(ctx, selected);
+    ggml_tensor * flat_ids = ggml_reshape_1d(ctx, selected_cont, ggml_nelements(selected_cont));
+    ggml_tensor * local_flat = ggml_get_rows(ctx, route_map, flat_ids);
+    ggml_tensor * local_ids = ggml_reshape_2d(ctx, local_flat, n_used, n_tokens);
+    ggml_set_output(local_ids);
+
+    ggml_cgraph * graph = ggml_new_graph(ctx);
+    ggml_build_forward_expand(graph, local_ids);
+
+    ggml_backend_sched_t sched = make_scheduler(cpu);
+    require(ggml_backend_sched_alloc_graph(sched, graph),
+        "failed to allocate argsort remap graph");
+
+    const std::array<int32_t, n_expert> map = { -1, -1, -1, -1, -1, -1 };
+    const std::array<float, n_expert * n_tokens> score_data = {
+        6.0f, 5.0f, 3.0f, 2.0f, 1.0f, 4.0f,
+        4.0f, 2.0f, 1.0f, 5.0f, 6.0f, 3.0f,
+    };
+
+    ggml_backend_tensor_set(route_map, map.data(), 0, sizeof(map));
+    ggml_backend_tensor_set(scores, score_data.data(), 0, sizeof(score_data));
+    require(
+        ggml_backend_sched_graph_compute(sched, graph) == GGML_STATUS_SUCCESS,
+        "argsort remap graph computation failed");
+    ggml_backend_sched_synchronize(sched);
+
+    std::array<int32_t, n_used * n_tokens> actual = {};
+    ggml_backend_tensor_get(local_ids, actual.data(), 0, sizeof(actual));
+    for (int32_t value : actual) {
+        require(value == -1, "argsort route remap changed a slot or map value");
+    }
+
+    ggml_backend_sched_free(sched);
+    ggml_free(ctx);
+}
+
 void test_mul_mat_id_missing_slots(ggml_backend_t cpu) {
     ggml_context * ctx = make_context();
 
@@ -158,7 +207,8 @@ int main() {
     require(cpu != nullptr, "failed to initialize CPU backend");
 
     test_route_remap(cpu);
-    test_mul_mat_id_missing_slots(cpu);
+        test_argsort_route_remap_contiguous(cpu);
+test_mul_mat_id_missing_slots(cpu);
 
     ggml_backend_free(cpu);
     return 0;

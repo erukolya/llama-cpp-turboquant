@@ -365,7 +365,8 @@ int main(int argc, char ** argv) {
     } catch (const std::exception & exception) {
         std::fprintf(stderr, "moe_u2: error=%s\n", exception.what());
     }
-
-    llama_backend_free();
+    // This is a one-shot validator and all model-owned buffers are
+    // already released. On Windows CUDA, global backend teardown can
+    // fault after the success markers; process exit reclaims that state.
     return result;
 }
