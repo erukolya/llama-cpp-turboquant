@@ -6,16 +6,25 @@
 #include "llama-moe-storage.h"
 #include "llama.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <iomanip>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
+
+constexpr uint64_t FNV_OFFSET = UINT64_C(14695981039346656037);
+constexpr uint64_t FNV_PRIME = UINT64_C(1099511628211);
+constexpr uint64_t FINGERPRINT_SAMPLE_BYTES = UINT64_C(4) * 1024 * 1024;
 
 struct options {
     std::string model_path;
@@ -85,6 +94,75 @@ bool parse_args(int argc, char ** argv, options & result) {
         std::fprintf(stderr, "error: --model and --plan are required\n");
         return false;
     }
+    return true;
+}
+
+void fnv_update(uint64_t & value, const uint8_t * data, size_t size) {
+    for (size_t index = 0; index < size; ++index) {
+        value ^= data[index];
+        value *= FNV_PRIME;
+    }
+}
+
+void fnv_update_u64_le(uint64_t & value, uint64_t input) {
+    uint8_t bytes[8];
+    for (size_t index = 0; index < 8; ++index) {
+        bytes[index] = static_cast<uint8_t>((input >> (8 * index)) & 0xff);
+    }
+    fnv_update(value, bytes, sizeof(bytes));
+}
+
+bool sampled_model_fingerprint(
+        const std::string & path,
+        std::string & result,
+        std::string & error) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        error = "failed to open model for fingerprint: " + path;
+        return false;
+    }
+
+    input.seekg(0, std::ios::end);
+    const std::streamoff end = input.tellg();
+    if (end < 0) {
+        error = "failed to determine model size for fingerprint";
+        return false;
+    }
+
+    const uint64_t size = static_cast<uint64_t>(end);
+    uint64_t value = FNV_OFFSET;
+    fnv_update_u64_le(value, size);
+
+    std::vector<uint8_t> buffer(static_cast<size_t>(std::min(size, FINGERPRINT_SAMPLE_BYTES)));
+    input.seekg(0, std::ios::beg);
+    if (!buffer.empty()) {
+        input.read(reinterpret_cast<char *>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
+        if (input.gcount() != static_cast<std::streamsize>(buffer.size())) {
+            error = "failed to read model prefix for fingerprint";
+            return false;
+        }
+        fnv_update(value, buffer.data(), buffer.size());
+    }
+
+    if (size > FINGERPRINT_SAMPLE_BYTES) {
+        const uint64_t offset = std::max(FINGERPRINT_SAMPLE_BYTES, size - FINGERPRINT_SAMPLE_BYTES);
+        fnv_update_u64_le(value, offset);
+        const size_t tail_size = static_cast<size_t>(size - offset);
+        buffer.resize(tail_size);
+        input.clear();
+        input.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+        input.read(reinterpret_cast<char *>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
+        if (input.gcount() != static_cast<std::streamsize>(buffer.size())) {
+            error = "failed to read model suffix for fingerprint";
+            return false;
+        }
+        fnv_update(value, buffer.data(), buffer.size());
+    }
+
+    std::ostringstream formatted;
+    formatted << "sampled-fnv1a64:" << std::hex << std::setfill('0') << std::setw(16) << value;
+    result = formatted.str();
+    error.clear();
     return true;
 }
 
@@ -178,6 +256,23 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "error: cannot load placement plan: %s\n", error.c_str());
         return 1;
     }
+    if (plan.model_fingerprint.empty()) {
+        std::fprintf(stderr, "error: placement plan has no model_fingerprint\n");
+        return 1;
+    }
+
+    std::string actual_model_fingerprint;
+    if (!sampled_model_fingerprint(args.model_path, actual_model_fingerprint, error)) {
+        std::fprintf(stderr, "error: cannot fingerprint model: %s\n", error.c_str());
+        return 1;
+    }
+    if (actual_model_fingerprint != plan.model_fingerprint) {
+        std::fprintf(stderr,
+            "error: model_fingerprint mismatch: plan=%s, model=%s\n",
+            plan.model_fingerprint.c_str(),
+            actual_model_fingerprint.c_str());
+        return 1;
+    }
 
     common_moe_expert_placement placement;
     if (!common_moe_expert_placement_build(plan, placement, error)) {
@@ -230,6 +325,7 @@ int main(int argc, char ** argv) {
 
         std::printf("moe_u2: loaded\n");
         std::printf("moe_u2: model_arch=%s\n", llm_arch_name(model->arch));
+        std::printf("moe_u2: model_fingerprint=%s\n", actual_model_fingerprint.c_str());
         std::printf("moe_u2: layers=%zu\n", placement.layers.size());
         std::printf("moe_u2: experts_total=%u\n", placement.logical_expert_count);
         std::printf("moe_u2: experts_cpu=%u\n", placement.cpu_expert_count);
