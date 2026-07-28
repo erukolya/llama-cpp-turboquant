@@ -41,6 +41,8 @@ add_library(llama
             llama-moe-registry-meta.cpp
             llama-moe-registry.cpp
             llama-moe-registry.h
+            llama-moe-route-partition.cpp
+            llama-moe-route-partition.h
             llama-moe-storage.cpp
             llama-moe-storage.h
             llama-quant.cpp
