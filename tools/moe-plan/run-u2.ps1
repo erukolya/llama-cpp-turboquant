@@ -103,7 +103,12 @@ if (-not $checker) {
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
-    $OutputDir = Join-Path (Get-Location) "moe-u2-result"
+    $modelStem = [System.IO.Path]::GetFileNameWithoutExtension($modelPath)
+    $safeModelStem = [regex]::Replace($modelStem, '[^A-Za-z0-9._-]+', '_').Trim('_')
+    if ([string]::IsNullOrWhiteSpace($safeModelStem)) {
+        $safeModelStem = "model"
+    }
+    $OutputDir = Join-Path (Get-Location) ("moe-u2-result-" + $safeModelStem)
 }
 $outputPath = [System.IO.Path]::GetFullPath($OutputDir)
 if (Test-Path -LiteralPath $outputPath) {
@@ -211,6 +216,14 @@ foreach ($line in ($stdout -split "`r?`n")) {
     }
 }
 
+$diagnostic = $null
+foreach ($line in ($combined -split "`r?`n")) {
+    $trimmed = $line.Trim()
+    if ($trimmed -match '^(error:|moe_u2:\s+error=)') {
+        $diagnostic = $trimmed
+    }
+}
+
 $summary = [ordered]@{
     success = $success
     checked_at_utc = [DateTime]::UtcNow.ToString("o")
@@ -221,6 +234,7 @@ $summary = [ordered]@{
     timeout_minutes = $TimeoutMinutes
     timed_out = $timedOut
     exit_code = $exitCode
+    diagnostic = $diagnostic
     total_physical_memory_bytes = $totalPhysicalMemoryBytes
     gpu_memory_before = $gpuMemoryBefore
     gpu_memory_after = $gpuMemoryAfter
@@ -240,6 +254,9 @@ if (-not $success) {
     Write-Host "U2 FAILED. Result package: $zipPath" -ForegroundColor Red
     if ($timedOut) {
         throw "U2 loader timed out after $TimeoutMinutes minutes. Return the generated ZIP for diagnosis."
+    }
+    if ($diagnostic) {
+        throw "U2 loader failed: $diagnostic. Return the generated ZIP for diagnosis."
     }
     throw "U2 loader failed or did not emit all required markers. Return the generated ZIP for diagnosis."
 }
