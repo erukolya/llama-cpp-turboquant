@@ -8,6 +8,9 @@ on:
     paths:
       - '.github/workflows/moe-u3-cuda.yml'
 
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -33,8 +36,7 @@ jobs:
       - name: Clone
         uses: actions/checkout@v6
         with:
-          ref: agent/static-moe-expert-placement
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Install CUDA 13.3
         uses: ./.github/actions/windows-setup-cuda
@@ -118,3 +120,23 @@ jobs:
           name: moe-u3-windows-x64-cuda13.3-sm120
           path: moe-u3-windows-x64-cuda13.3-sm120.zip
           retention-days: 7
+
+      - name: Record U3 build status
+        if: always()
+        shell: pwsh
+        run: |
+          $status = '${{ job.status }}'
+          @"
+          status=$status
+          run=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          commit=${{ github.sha }}
+          recorded_at_utc=$([DateTime]::UtcNow.ToString('o'))
+          "@ | Set-Content '.github\moe-u3-build-status.txt' -Encoding UTF8
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add '.github\moe-u3-build-status.txt'
+          if (git diff --cached --quiet) { exit 0 }
+          git commit -m "ci: record MoE U3 build $status"
+          git pull --rebase origin agent/static-moe-expert-placement
+          git push origin HEAD:agent/static-moe-expert-placement
