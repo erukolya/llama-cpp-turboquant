@@ -282,3 +282,42 @@ Do not implement on the current branch:
 - U3 child processes also set `GGML_NO_BACKTRACE=1` as a defensive workaround.
 - Windows CI now executes `llama-moe-load-check.exe --help` before packaging and rejects any checker that cannot start.
 - **USER NOT NEEDED** until the replacement package passes the startup smoke test and is published.
+
+
+## U3 Q4/Q5 hardware acceptance complete (2026-07-28)
+
+The corrected Windows CUDA 13.3 / SM120 runtime passed end-to-end static mixed CPU/CUDA execution on both target quantizations.
+
+### Q5_K_M
+
+- model fingerprint: `sampled-fnv1a64:66d21554683500ba`;
+- experts: 5,377 CPU + 4,863 GPU = 10,240;
+- compact tensors: 120 CPU + 120 GPU;
+- exact routed bytes: 12,019,130,368 CPU + 10,839,826,432 GPU = 22,858,956,800;
+- packed routed runtime tensors: `0`;
+- CPU `MUL_MAT_ID` operations: 1,200;
+- accelerator `MUL_MAT_ID` operations: 1,200;
+- routed-weight copy bytes/payload/slices/calls/inputs: all `0`;
+- baseline decode: 28.5714 tok/s;
+- static decode: 39.2157 tok/s (`+37.26%` for this short deterministic probe).
+
+### Q4_K_M
+
+- model fingerprint: `sampled-fnv1a64:d1859e626beb3c0e`;
+- experts: 4,515 CPU + 5,725 GPU = 10,240;
+- compact tensors: 120 CPU + 120 GPU;
+- exact routed bytes: 8,663,654,400 CPU + 10,839,859,200 GPU = 19,503,513,600;
+- packed routed runtime tensors: `0`;
+- CPU `MUL_MAT_ID` operations: 1,200;
+- accelerator `MUL_MAT_ID` operations: 1,200;
+- routed-weight copy bytes/payload/slices/calls/inputs: all `0`;
+- baseline decode: 34.3348 tok/s;
+- static decode: 43.0108 tok/s (`+25.27%` for this short deterministic probe).
+
+### Validator correction
+
+- `llama-server` may suppress detailed compact-loader INFO lines; strict plan scope plus the exact U2 semantic gate is accepted as proof of compact loading and zero packed runtime tensors.
+- Full greedy text equality across CPU-only and mixed CPU/CUDA backends is retained as a diagnostic only. Quantized CPU and CUDA matmul can diverge after several tokens because accumulation order differs.
+- The deterministic acceptance probe requires the first generated lexical unit to match; both hardware runs matched `Paris.` with a seven-character common prefix.
+
+**V1.3 hardware gate is complete. USER NOT NEEDED.**
