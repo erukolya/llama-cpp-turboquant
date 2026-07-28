@@ -16,6 +16,12 @@ param(
     [ValidateRange(512, 32768)]
     [int] $CtxSize = 4096,
 
+    [ValidateSet("f16", "q8_0", "q4_0", "turbo2", "turbo3", "turbo4")]
+    [string] $CacheTypeK = "turbo4",
+
+    [ValidateSet("f16", "q8_0", "q4_0", "turbo2", "turbo3", "turbo4")]
+    [string] $CacheTypeV = "turbo3",
+
     [int] $NGpuLayers = -1,
 
     [ValidateRange(1, 256)]
@@ -220,6 +226,9 @@ function Start-ServerAndGenerate {
         "--batch-size", "256",
         "--ubatch-size", "256",
         "--threads", $Threads.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+        "--cache-type-k", $CacheTypeK,
+        "--cache-type-v", $CacheTypeV,
+        "--flash-attn", "on",
         "--no-mmap",
         "--no-warmup",
         "--metrics"
@@ -518,6 +527,9 @@ try {
         prompt = $Prompt
         n_predict = $NPredict
         ctx_size = $CtxSize
+        cache_type_k = $CacheTypeK
+        cache_type_v = $CacheTypeV
+        flash_attention = $true
         n_gpu_layers = $NGpuLayers
         threads = $Threads
         baseline_skipped = [bool] $SkipBaseline
@@ -551,3 +563,4 @@ try {
 if (-not $success) {
     throw "U3 validation failed: $diagnostic. Return the generated ZIP for diagnosis."
 }
+
