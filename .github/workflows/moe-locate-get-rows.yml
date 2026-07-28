@@ -24,11 +24,11 @@ jobs:
         run: |
           {
             echo '=== declarations and constructors ==='
-            rg -n -C 8 'ggml_get_rows\(|GGML_OP_GET_ROWS' ggml/src ggml/include | head -n 500
+            (rg -n -C 8 'ggml_get_rows\(|GGML_OP_GET_ROWS' ggml/src ggml/include || true) | head -n 500
             echo '=== CPU forward implementations ==='
-            rg -n -C 40 'compute_forward_get_rows|get_rows.*GGML_TYPE_I32|GGML_TYPE_I32.*get_rows' ggml/src/ggml-cpu | head -n 800
+            (rg -n -C 40 'compute_forward_get_rows|get_rows.*GGML_TYPE_I32|GGML_TYPE_I32.*get_rows' ggml/src/ggml-cpu || true) | head -n 800
             echo '=== CUDA implementations ==='
-            rg -n -C 40 'GET_ROWS|get_rows' ggml/src/ggml-cuda | head -n 800
+            (rg -n -C 40 'GGML_OP_GET_ROWS|get_rows' ggml/src/ggml-cuda || true) | head -n 800
           } > moe-get-rows-locations.txt
 
           git config user.name github-actions[bot]
