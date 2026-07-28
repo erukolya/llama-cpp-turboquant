@@ -75,12 +75,13 @@ jobs:
           test-moe-pool-plan
           test-moe-storage
           test-moe-registry
+          test-moe-route-partition
 
       - name: Run MoE tests
         shell: bash
         run: >-
           ctest --test-dir build -C Release --output-on-failure
-          -R '^test-moe-(load-scope|load-shared|pool-plan|storage|registry)$'
+          -R '^test-moe-(load-scope|load-shared|pool-plan|storage|registry|route-partition)$'
 
   u2-static-tool:
     strategy:
