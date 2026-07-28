@@ -1,4 +1,4 @@
-status=in_progress
+status=success
 run=https://github.com/erukolya/llama-cpp-turboquant/actions/runs/30385147483
 commit=cfa9db61a14c07dd147c3fd3b06f8da9633022b4
-recorded_at_utc=2026-07-28T17:56:49.5592476Z
+recorded_at_utc=2026-07-28T18:35:27.6953865Z
