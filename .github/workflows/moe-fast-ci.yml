@@ -94,11 +94,40 @@ jobs:
           test-moe-route-partition
           test-moe-route-remap
 
-      - name: Run MoE tests
+      - name: Run MoE tests on Ubuntu
+        if: runner.os == 'Linux'
         shell: bash
         run: >-
           ctest --test-dir build -C Release --output-on-failure
           -R '^test-moe-(load-scope|load-shared|pool-plan|storage|registry|route-partition|route-remap)$'
+
+      - name: Windows test — load scope
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build -C Release --output-on-failure -R '^test-moe-load-scope$'
+
+      - name: Windows test — shared placement API
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build -C Release --output-on-failure -R '^test-moe-load-shared$'
+
+      - name: Windows test — pool plan
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build -C Release --output-on-failure -R '^test-moe-pool-plan$'
+
+      - name: Windows test — storage
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build -C Release --output-on-failure -R '^test-moe-storage$'
+
+      - name: Windows test — registry
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build -C Release --output-on-failure -R '^test-moe-registry$'
+
+      - name: Windows test — route partition
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build -C Release --output-on-failure -R '^test-moe-route-partition$'
+
+      - name: Windows test — backend route remap and sentinel
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build -C Release --output-on-failure -R '^test-moe-route-remap$'
 
   u2-static-tool:
     strategy:
