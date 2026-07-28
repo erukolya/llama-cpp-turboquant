@@ -1,0 +1,215 @@
+name: MoE U3 GGML Terminate Init Fix
+
+on:
+  push:
+    branches:
+      - agent/static-moe-expert-placement
+    paths:
+      - '.github/workflows/moe-u3-terminate-init-fix-once.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: moe-u3-terminate-init-fix-once
+  cancel-in-progress: false
+
+env:
+  CMAKE_ARGS: >-
+    -DBUILD_SHARED_LIBS=OFF
+    -DLLAMA_CURL=OFF
+    -DLLAMA_BUILD_EXAMPLES=OFF
+    -DLLAMA_BUILD_TESTS=OFF
+    -DLLAMA_BUILD_TOOLS=ON
+    -DLLAMA_BUILD_SERVER=ON
+    -DGGML_NATIVE=OFF
+    -DGGML_CUDA=ON
+    -DGGML_CUDA_FA_ALL_QUANTS=ON
+    -DCMAKE_CUDA_ARCHITECTURES=120
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.publish.outputs.commit }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Make GGML terminate registration idempotent
+        shell: python
+        run: |
+          from pathlib import Path
+
+          ggml = Path('ggml/src/ggml.cpp')
+          text = ggml.read_text(encoding='utf-8')
+          old = '''    const auto prev{std::get_terminate()};
+              GGML_ASSERT(prev != ggml_uncaught_exception);
+              previous_terminate_handler = prev;
+              std::set_terminate(ggml_uncaught_exception);
+          '''
+          new = '''    const auto prev{std::get_terminate()};
+              // Static Windows builds may link this initialization through more than
+              // one dependency path. Re-registering the same handler must be a no-op;
+              // assigning it as its own predecessor would recurse during termination.
+              if (prev == ggml_uncaught_exception) {
+                  return true;
+              }
+              previous_terminate_handler = prev;
+              std::set_terminate(ggml_uncaught_exception);
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'GGML terminate initializer block count={text.count(old)}')
+          ggml.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          runner = Path('tools/moe-plan/run-u3.ps1')
+          text = runner.read_text(encoding='utf-8')
+          anchor = '$ErrorActionPreference = "Stop"\n'
+          addition = '''$ErrorActionPreference = "Stop"
+
+          # Avoid installing a process-global backtrace hook in validator/server child
+          # processes. The binaries remain protected by the idempotent source fix too.
+          $env:GGML_NO_BACKTRACE = "1"
+          '''
+          if '$env:GGML_NO_BACKTRACE = "1"' not in text:
+              if text.count(anchor) != 1:
+                  raise SystemExit(f'runner ErrorActionPreference anchor count={text.count(anchor)}')
+              text = text.replace(anchor, addition, 1)
+          runner.write_text(text, encoding='utf-8')
+
+          Path('.github/workflows/moe-u3-terminate-init-fix-once.yml').unlink()
+
+          progress = Path('docs/moe-expert-placement-progress.md')
+          with progress.open('a', encoding='utf-8') as f:
+              f.write('''\n\n## U3 Q5 checker startup diagnosis (2026-07-28)\n\n- The MMVQ-corrected package failed before opening the model.\n- `llama-moe-load-check.exe` aborted in `ggml.cpp` because the static `std::terminate` hook was registered twice.\n- The registration is now idempotent: an already-installed identical handler is accepted without replacing its predecessor.\n- U3 child processes also set `GGML_NO_BACKTRACE=1` as a defensive workaround.\n- Windows CI now executes `llama-moe-load-check.exe --help` before packaging and rejects any checker that cannot start.\n- **USER NOT NEEDED** until the replacement package passes the startup smoke test and is published.\n''')
+
+      - name: Validate patch structure
+        shell: python
+        run: |
+          from pathlib import Path
+          ggml = Path('ggml/src/ggml.cpp').read_text(encoding='utf-8')
+          assert 'if (prev == ggml_uncaught_exception)' in ggml
+          assert 'GGML_ASSERT(prev != ggml_uncaught_exception)' not in ggml
+          runner = Path('tools/moe-plan/run-u3.ps1').read_text(encoding='utf-8')
+          assert '$env:GGML_NO_BACKTRACE = "1"' in runner
+
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $null = [scriptblock]::Create(
+            (Get-Content .\tools\moe-plan\run-u3.ps1 -Raw -Encoding UTF8))
+
+      - name: Publish patch
+        id: publish
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add ggml/src/ggml.cpp tools/moe-plan/run-u3.ps1 docs/moe-expert-placement-progress.md .github/workflows/moe-u3-terminate-init-fix-once.yml
+          git commit -m "fix: make GGML terminate initialization idempotent"
+          git pull --rebase origin agent/static-moe-expert-placement
+          git push origin HEAD:agent/static-moe-expert-placement
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  windows-cuda-13-3:
+    needs: patch
+    runs-on: windows-2022
+    steps:
+      - name: Checkout exact patch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.patch.outputs.commit }}
+          fetch-depth: 1
+
+      - name: Install CUDA 13.3
+        uses: ./.github/actions/windows-setup-cuda
+        with:
+          cuda_version: '13.3'
+
+      - name: Install Ninja
+        shell: pwsh
+        run: choco install ninja --no-progress
+
+      - name: Configure targeted U3 build
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          cmake -S . -B build -G "Ninja Multi-Config" %CMAKE_ARGS%
+
+      - name: Build corrected U3 targets
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
+          cmake --build build --config Release -j %NINJA_JOBS% --target llama-server llama-moe-load-check llama-moe-plan-check
+
+      - name: Smoke-test packaged executables
+        shell: pwsh
+        run: |
+          $src = '.\build\bin\Release'
+          Remove-Item Env:GGML_NO_BACKTRACE -ErrorAction SilentlyContinue
+
+          & "$src\llama-moe-load-check.exe" --help 2>&1 | Tee-Object -FilePath checker-help.log
+          if ($LASTEXITCODE -ne 0) {
+            throw "llama-moe-load-check startup smoke test failed: $LASTEXITCODE"
+          }
+
+          & "$src\llama-moe-plan-check.exe" --help 2>&1 | Tee-Object -FilePath planner-help.log
+          if ($LASTEXITCODE -ne 0) {
+            throw "llama-moe-plan-check startup smoke test failed: $LASTEXITCODE"
+          }
+
+          & "$src\llama-server.exe" --version 2>&1 | Tee-Object -FilePath server-version.log
+          if ($LASTEXITCODE -ne 0) {
+            throw "llama-server startup smoke test failed: $LASTEXITCODE"
+          }
+
+      - name: Package corrected U3 validator
+        shell: pwsh
+        run: |
+          $src = '.\build\bin\Release'
+          $dst = '.\moe-u3-package'
+          New-Item -ItemType Directory -Path $dst -Force | Out-Null
+
+          Copy-Item "$src\llama-server.exe" $dst
+          Copy-Item "$src\llama-moe-load-check.exe" $dst
+          Copy-Item "$src\llama-moe-plan-check.exe" $dst
+          Copy-Item '.\tools\moe-plan\run-u3.ps1' "$dst\run-moe-u3.ps1"
+          Copy-Item '.\tools\moe-plan\run-u3.cmd' "$dst\run-moe-u3.cmd"
+          Copy-Item LICENSE $dst
+          Copy-Item checker-help.log $dst
+          Copy-Item planner-help.log $dst
+          Copy-Item server-version.log $dst
+
+          robocopy "${{ env.CUDA_PATH }}\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -gt 7) { exit $LASTEXITCODE }
+
+          $commit = (git rev-parse HEAD).Trim()
+          @"
+          Branch: agent/static-moe-expert-placement
+          Commit: $commit
+          CUDA: 13.3
+          CUDA architecture: 120
+          Fixes: guarded MMVQ -1 IDs and idempotent GGML terminate initialization
+          Startup smoke tests: checker, planner and server passed before packaging
+          Models: Qwen3.5/3.6 MoE Q4_K_M and Q5_K_M, one NVIDIA GPU
+          "@ | Set-Content "$dst\U3-BUILD.txt" -Encoding UTF8
+
+          Get-ChildItem $dst -File | Sort-Object Name | ForEach-Object {
+            "{0}  {1}" -f ((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()), $_.Name
+          } | Set-Content "$dst\U3-FILES-SHA256.txt" -Encoding UTF8
+
+          7z a moe-u3-windows-x64-cuda13.3-sm120-terminate-init-fix.zip "$dst\*"
+          Get-FileHash .\moe-u3-windows-x64-cuda13.3-sm120-terminate-init-fix.zip -Algorithm SHA256 |
+            Format-List | Out-File .\U3-PACKAGE-SHA256.txt -Encoding utf8
+
+      - name: Upload corrected U3 package
+        uses: actions/upload-artifact@v6
+        with:
+          name: moe-u3-windows-x64-cuda13.3-sm120-terminate-init-fix
+          path: |
+            moe-u3-windows-x64-cuda13.3-sm120-terminate-init-fix.zip
+            U3-PACKAGE-SHA256.txt
+          retention-days: 7
