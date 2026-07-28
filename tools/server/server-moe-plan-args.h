@@ -72,10 +72,12 @@ inline bool server_moe_plan_parse_args(int & argc, char ** argv, server_moe_plan
     if (show_help) {
         std::fprintf(stdout,
             "\nStatic MoE expert placement plan:\n"
-            "  --moe-expert-plan FNAME         load and validate a static expert placement JSON plan\n"
+            "  --moe-expert-plan FNAME         load routed experts into exclusive CPU/CUDA pools and use\n"
+            "                                    the plan for mixed inference\n"
             "                                    (env: LLAMA_ARG_MOE_EXPERT_PLAN)\n"
-            "  --moe-expert-plan-strict        fail model startup when the plan is invalid or incompatible\n"
-            "  --moe-expert-plan-dry-run       print the intended per-layer CPU/VRAM split; no allocation changes\n\n");
+            "  --moe-expert-plan-strict        require strict schema-v2 compatibility checks\n"
+            "  --moe-expert-plan-dry-run       validate and print the intended split using stock packed\n"
+            "                                    tensors; no allocation or inference changes\n\n");
     }
 
     return true;
