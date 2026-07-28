@@ -4,7 +4,7 @@ This file is the source of truth for **Version 1: complete static per-expert MoE
 
 Version 2, adaptive rebalancing, LRU/LFU caching, miss loading and NVMe tiers are out of scope until Version 1 is complete, benchmarked and accepted.
 
-Detailed design:
+Detailed design and results:
 
 - `docs/moe-expert-static-placement-spec.md`
 - `docs/moe-expert-static-placement-design-v1.md`
@@ -23,8 +23,8 @@ Active work:
 
 | Marker | Meaning |
 |---|---|
-| `[x]` | Implemented and its gate passed |
-| `[~]` | Active or awaiting automated validation |
+| `[x]` | Implemented and its automated gate passed |
+| `[~]` | Implemented or active, awaiting the next acceptance gate |
 | `[!]` | Blocked by a required hardware gate |
 | `[ ]` | Not started |
 
@@ -32,15 +32,15 @@ Active work:
 
 **Current status: USER NOT NEEDED.**
 
-Q5_K_M completed the U2 exclusive-storage gate. The uploaded Q4_K_M package used the Q5 plan, so its exact byte comparison is intentionally not accepted; it still confirmed compact CPU/CUDA pools and zero packed routed tensors. The validator now rejects model/plan fingerprint mismatches before backend initialization and allocation.
+The V1.3 mixed execution graph, server integration, backend route remap and guarded missing-slot execution are implemented. Windows and Ubuntu tests execute the real I32 route-map operation and guarded `MUL_MAT_ID(-1)` path. The dedicated Windows CUDA 13.3 U3 artifact is currently being built.
 
-No repeat Q4 test is required before V1.3. The next required user action is U3 only after mixed CPU/CUDA execution, correctness checks and a dedicated Windows CUDA 13.3 artifact are ready.
+The next user action is one U3 command for Q4_K_M and one for Q5_K_M after the artifact is ready. Each command produces a diagnostic ZIP automatically.
 
-Planned hardware checkpoints:
+Hardware checkpoints:
 
 1. **U1 — complete:** exact model/plan dry run on Q5_K_M and Q4_K_M.
-2. **U2 — accepted for Q5_K_M:** exclusive split-loader RAM/VRAM validation. Q4_K_M exact matching-plan accounting remains optional before final acceptance; its structural exclusive-storage invariants passed.
-3. **U3 — pending:** final correctness, PCIe and performance validation on both Q4_K_M and Q5_K_M.
+2. **U2 — accepted for Q5_K_M:** exact exclusive split-loader accounting. Q4_K_M structurally confirmed compact pools and zero packed tensors; its uploaded run used the Q5 plan.
+3. **U3 — artifact building:** end-to-end baseline/static output, backend execution, zero weight-transfer and memory checks on both Q4_K_M and Q5_K_M.
 
 ## Mandatory invariants
 
@@ -50,26 +50,23 @@ Planned hardware checkpoints:
 - ordinary decode performs no routed-expert weight transfer over PCIe;
 - GPU experts execute on CUDA;
 - CPU experts execute on CPU;
-- mixed top-k assignments are partitioned without changing router semantics;
-- CPU and CUDA branches overlap where possible;
+- mixed top-k assignments preserve slot positions, router weights and model semantics;
+- CPU and CUDA branches are joined exactly once;
 - stock behavior without a placement plan remains unchanged.
 
 ## Current project state
 
-**Current phase:** V1.3 correct mixed CPU/CUDA execution.
+**Current phase:** V1.3 implementation complete; U3 integration and hardware acceptance active.
 
-**Current decision:** Qwen3.5/3.6 MoE can claim the packed routed tensors as GGUF slice sources, allocate compact model-owned CPU and CUDA pools, and load quantized expert slices without creating the original persistent packed runtime tensors. Q5_K_M proved exact planned/actual CPU, GPU and total routed bytes, zero packed routed pointers and successful unload. The Q4_K_M archive used the Q5 plan; the loaded Q4 compact bank was correctly smaller and still had zero packed tensors. Ordinary server inference with compact pools remains blocked until the V1.3 graph executes each tier on its assigned backend.
+Qwen3.5/3.6 MoE now claims packed routed tensors only as GGUF slice sources, allocates model-owned compact CPU and CUDA pools, and loads quantized expert slices without creating persistent packed runtime tensors. The router and top-k selection run once. Backend-local IDs are obtained from immutable I32 route maps, CPU and CUDA compact pools execute separate expert branches, and their weighted contributions are joined once with the result retained on the GPU side.
 
-Confirmed baseline:
+The server accepts `--moe-expert-plan` for real inference. Dry-run remains a separate stock-packed validation mode. Static placement disables stock all-expert warmup and exposes these Prometheus counters:
 
-```text
-CUDA_Host packed expert tensor
--> read selected top-k IDs
--> copy selected expert slices over PCIe
--> CUDA MUL_MAT_ID
-```
+- CPU and accelerator `MUL_MAT_ID` executions;
+- selective routed-weight bytes and payload bytes;
+- expert slices, grouped copy calls and packed weight inputs.
 
-The static CPU pool must explicitly avoid this operation-offload path.
+U3 requires both execution counters to be positive and every routed-weight copy counter to remain exactly zero.
 
 ## Accepted U1 results
 
@@ -109,6 +106,7 @@ Q4 adds 862 hot experts, improves estimated GPU coverage by 6.806 percentage poi
 - [x] Selective RAM-to-CUDA expert-slice copy path confirmed.
 - [x] Tensor views rejected as an exclusive-residency solution.
 - [x] Scheduler/public API counters for selective weight copies and CPU/accelerator `MUL_MAT_ID`.
+- [x] Expose the counters through the server `/metrics` endpoint.
 
 ## V1.1 — Planner, contract and exact model validation
 
@@ -126,93 +124,85 @@ Q4 adds 862 hot experts, improves estimated GPU coverage by 6.806 percentage poi
 
 ## V1.2 — Exclusive split storage and selective loading
 
-**Status:** implementation complete; Q5_K_M hardware gate accepted, Q4_K_M structural invariants confirmed with exact matching-plan rerun deferred.
+- [x] Deterministic per-layer global-to-local CPU/GPU location tables.
+- [x] Immutable placement snapshot owned by the model.
+- [x] Compact CPU and CUDA routed-expert pools.
+- [x] Direct quantized GGUF slice loading without dequantization.
+- [x] Separate and merged gate-up layouts.
+- [x] No original persistent packed routed tensor allocation.
+- [x] Exact planned/actual CPU/GPU logical and allocated byte accounting.
+- [x] Model-only load/unload validator on Windows and Ubuntu.
+- [x] Model/plan fingerprint rejection before backend initialization and allocation.
+- [x] Windows CUDA 13.3 U2 artifact.
+- [x] Q5_K_M exact U2 accounting, zero packed tensors and unload accepted.
+- [x] Q4_K_M compact pools and zero packed tensors structurally confirmed.
+- [~] Optional Q4_K_M exact matching-plan accounting rerun; final U3 covers it.
 
-- [x] Design ownership and lifecycle of CPU/GPU expert pools.
-- [x] Locate Qwen3.5 MoE packed tensor creation in `src/models/qwen35moe.cpp`.
-- [x] Confirm one `build_moe_ffn` graph path.
-- [x] Identify pre-allocation model-loading integration point.
-- [x] Identify runtime tensors without source weights as the compact-pool extension point.
-- [x] Add deterministic per-layer global-to-local CPU/GPU location tables.
-- [x] Move validated placement access to the model-loading boundary.
-- [x] Deep-copy immutable placement before the server load scope ends.
-- [x] Plan compact CPU/GPU tensor shapes, exact bytes and coalesced copy spans.
-- [x] Convert real GGUF `ggml_tensor` metadata into exact compact source layouts.
-- [x] Claim packed GGUF tensors as slice sources without standard runtime allocation.
-- [x] Validate all-CPU, all-GPU and mixed compact-pool plans.
-- [x] Create compact CPU routed-expert pools.
-- [x] Create compact CUDA routed-expert pools.
-- [x] Support separate and merged gate-up tensors in model loading.
-- [x] Copy quantized slices without dequantization.
-- [x] Validate quant-block and backend alignment for Q5_K_M on real hardware; Q4_K_M produced the expected smaller compact bank under the mismatched Q5 plan.
-- [x] Read slices directly from GGUF with `--no-mmap`; mmap and direct-I/O compact loading remain explicitly blocked.
-- [x] Avoid allocating the original persistent packed routed tensors in Qwen3.5 MoE.
-- [x] Prove no complete RAM expert bank remains for Q5_K_M; Q4_K_M also reported zero packed routed tensors.
-- [x] Add all-CPU, all-GPU and mixed loading tests; Q5_K_M real mixed load passed.
-- [x] Add exact planned/actual CPU/GPU logical and allocated byte accounting.
-- [x] Add model-only load/unload validator and Windows PowerShell result package.
-- [x] Build the model-only validator on Windows and Ubuntu.
-- [x] Reject model/plan fingerprint mismatches before backend initialization and compact allocation.
-- [x] Block ordinary compact-pool server inference until V1.3.
-- [x] Build the final Windows CUDA 13.3 U2 artifact.
-- [x] Run U2 on Q5_K_M and accept exact accounting, zero packed tensors and unload.
-- [~] Optional Q4_K_M exact matching-plan accounting rerun; not required to continue V1.3.
-
-**V1.2 exit gate:** passed for Q5_K_M. The same storage implementation structurally passed on Q4_K_M; exact Q4 plan accounting remains recorded as a deferred confirmation, not a V1.3 blocker.
+**V1.2 exit gate:** passed for Q5_K_M; storage implementation structurally passed for Q4_K_M.
 
 ## V1.3 — Correct mixed execution
 
-- [~] Partition original top-k by location table; host reference and all-CPU/all-GPU/mixed tests are implemented, graph integration pending.
-- [~] Remap global IDs to local CPU/GPU pool IDs while preserving top-k slot positions; host reference is implemented, graph integration pending.
-- [ ] Execute CPU pools only on CPU and GPU pools only on CUDA.
-- [ ] Prevent operation offload of CPU-pool `MUL_MAT_ID`.
-- [ ] Implement split gate/up and down projection.
-- [ ] Join contributions exactly once.
-- [ ] Preserve shared experts, token indices and router weights.
-- [ ] Handle arbitrary per-token CPU/GPU top-k splits.
-- [ ] Add tensor-level, logits and perplexity correctness tests.
+- [x] Split router/top-k generation from expert execution while retaining the stock wrapper.
+- [x] Partition original top-k by immutable per-layer location maps.
+- [x] Remap global IDs to local CPU/GPU IDs without changing top-k slot positions.
+- [x] Preserve the original router weights for both branches.
+- [x] Execute compact CPU and GPU expert branches separately.
+- [x] Support separate and merged gate-up projection paths.
+- [x] Preserve shared experts unchanged.
+- [x] Handle arbitrary per-token CPU/GPU top-k splits with `-1` missing slots.
+- [x] Guard `MUL_MAT_ID` missing-slot behavior without changing stock execution.
+- [x] Implement the guarded path in generic CPU, x86 repack and CUDA backends.
+- [x] Join CPU and GPU weighted contributions exactly once.
+- [x] Add host slot/weight/sum tests on Windows and Ubuntu.
+- [x] Add real backend I32 remap and guarded `MUL_MAT_ID(-1)` tests on Windows and Ubuntu.
+- [~] End-to-end baseline/static output equality and real CUDA execution: U3 pending.
+
+**V1.3 implementation gate: passed. Hardware correctness gate: U3 pending.**
 
 ## V1.4 — Parallel CPU/CUDA execution
 
-- [ ] Add synthetic fork-and-join test.
-- [ ] Determine standard scheduler overlap behavior.
-- [ ] Use pinned activation/result buffers and asynchronous events.
-- [ ] Avoid per-layer global synchronization.
+- [ ] Add synthetic fork-and-join timing test.
+- [~] Determine scheduler overlap behavior on the real mixed graph during U3.
+- [ ] Use pinned activation/result buffers and asynchronous events if measurements require them.
+- [ ] Avoid unnecessary per-layer synchronization.
 - [ ] Add CPU/GPU/join timing.
 - [ ] Confirm mixed time approaches `max(CPU, GPU)` rather than their sum.
 
 ## V1.5 — Integration and metrics
 
-- [ ] Integrate server, CLI and bench.
-- [ ] Preserve TurboQuant KV behavior.
-- [ ] Add routing coverage and activation-transfer metrics.
-- [ ] Confirm routed-expert weight-transfer counter remains zero during decode.
+- [x] Integrate static placement with `llama-server` and CLI parsing.
+- [x] Preserve a separate stock-packed dry-run validator.
+- [x] Disable all-expert warmup for static placement.
+- [x] Expose CPU/accelerator execution and routed-weight copy counters through `/metrics`.
+- [~] Confirm routed-expert weight-transfer counters remain zero during real decode: U3 pending.
+- [~] Preserve TurboQuant KV behavior: final server test pending.
 - [ ] Benchmark PP and TG separately.
 - [ ] Compare current layer placement against static per-expert placement.
 - [ ] Measure RAM, VRAM and PCIe traffic.
 
 ## V1.6 — Production acceptance
 
-- [ ] Validate startup, shutdown, unload and reload.
+- [~] Validate startup, generation, shutdown and unload through the U3 runner.
 - [ ] Validate long-running server operation.
-- [ ] Validate `--parallel 1`.
-- [ ] Reject unsupported multi-GPU/RPC/backend combinations.
-- [ ] Validate no-plan stock behavior and strict/non-strict failure modes.
-- [ ] Document supported models, quants, backends and workflow.
-- [!] Run final U3 package on Q4_K_M and Q5_K_M.
+- [x] Implement and test `--parallel 1` U3 configuration.
+- [ ] Reject unsupported multi-GPU/RPC/backend combinations explicitly.
+- [~] Validate no-plan stock behavior and strict plan mode through U3.
+- [~] Document supported models, quants, backends and workflow.
+- [~] Build the Windows CUDA 13.3 U3 artifact.
+- [!] Run final U3 on Q4_K_M and Q5_K_M.
 
 ## Version 1 acceptance gate
 
-- required CI and tests are green;
-- output is correct within accepted numerical tolerance;
+- required Windows, Ubuntu and CUDA builds are green;
+- stock baseline and static output match under the deterministic U3 prompt;
 - no permanent routed-expert duplication;
-- no routed-expert weight transfers during ordinary decode;
-- CPU and CUDA experts execute on their assigned backend;
-- load, unload and shutdown are stable;
+- every routed-expert weight-transfer counter remains zero during ordinary decode;
+- CPU and CUDA execution counters are both positive;
+- load, generation, shutdown and unload are stable;
 - TurboQuant KV remains functional;
 - TG regression is not greater than 5%;
 - target TG improvement is at least 15%, or a measured bottleneck analysis explains why not;
-- the full workflow is reproducible for both Q4_K_M and Q5_K_M.
+- the workflow is reproducible for both Q4_K_M and Q5_K_M.
 
 # Explicitly deferred
 
@@ -229,28 +219,23 @@ Do not implement on the current branch:
 
 ## 2026-07-28
 
-- Fixed the Windows shared-library smoke test without exporting the internal placement dimension validator; both Windows and Ubuntu MoE CI jobs passed.
-- Added immutable deep-copy placement snapshots at the model-loading boundary.
-- Added compact tensor pool planning with exact CPU/GPU shapes, bytes and coalesced source-copy spans.
-- Added exact adapters from real `ggml_tensor` metadata into compact source layouts.
-- Added a loader contract that claims packed tensors as selective slice sources without adding them to standard model buffers.
-- Added model-owned compact CPU and CUDA storage with correct buffer-before-context teardown.
-- Added direct quantized GGUF slice loading for Qwen3.5/3.6 MoE separate and merged gate-up layouts.
-- Removed persistent packed routed tensor allocation from the compact model-load path.
-- Added `llama-moe-load-check` with exact byte accounting, zero-packed-pointer verification and load/unload markers.
-- Added `run-u2.ps1` with RAM, VRAM, stdout/stderr and machine-readable result collection.
-- Built the U2 validator successfully on Windows and Ubuntu.
-- Blocked ordinary server inference with compact pools until the mixed execution graph exists in V1.3.
-- Added mixed, all-GPU, invalid-size, invalid-axis and duplicate-destination storage tests.
 - Accepted Q5_K_M U2 with exact CPU/GPU/total bytes, 240 compact tensors, zero packed routed tensors and successful unload.
-- Diagnosed the Q4_K_M U2 archive as a Q4 model paired with the Q5 plan; compact pools and zero packed tensors were still confirmed.
-- Added early model fingerprint rejection before backend initialization/allocation to prevent future Q4/Q5 plan mix-ups.
-- Kept Q4_K_M and Q5_K_M as equal supported targets for final U3.
-- Added and connected the V1.3 route-partition host reference with all-CPU, all-GPU and mixed slot-preservation tests on Windows and Ubuntu.
+- Diagnosed the Q4_K_M U2 archive as a Q4 model paired with the Q5 plan while confirming compact pools and zero packed tensors.
+- Added early model fingerprint rejection before backend initialization/allocation.
+- Split MoE routing/top-k generation from expert execution.
+- Added model-owned CPU/GPU route-map tensors and direct compact tensor pointers on each layer.
+- Added mixed CPU/CUDA expert branches with slot-preserving global-to-local ID remap.
+- Added guarded negative route slots to generic CPU, x86 repack and CUDA `MUL_MAT_ID` paths.
+- Added Windows and Ubuntu host partition, backend I32 remap and guarded missing-slot tests.
+- Fixed Release tests that incorrectly depended on side effects inside `assert()`.
+- Enabled real `llama-server --moe-expert-plan` inference while retaining dry-run validation.
+- Disabled all-expert warmup for static placement.
+- Exposed MoE execution and routed-weight copy counters through `/metrics`.
+- Added `run-u3.ps1` for exact U2 accounting, deterministic baseline/static generation, output equality, backend execution and zero-copy checks.
+- Started the targeted Windows CUDA 13.3 SM120 U3 artifact build.
 
 ## 2026-07-27
 
 - Accepted U1 for Q5_K_M and Q4_K_M on RTX 5070 Ti.
 - Added exact Q5/Q4 placement comparison in `docs/moe-u1-results.md`.
 - Started V1.2 with deterministic global-to-local CPU/GPU location tables and byte accounting.
-- Kept user involvement deferred until U2.
