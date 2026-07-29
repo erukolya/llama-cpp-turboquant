@@ -34,16 +34,16 @@ $prompt = @"
 Read this complete factual task carefully. Answer the following question using exactly one word and no explanation: What is the capital city of France?
 "@.Trim()
 
-$runnerArgs = @(
-    "-Model", $Model,
-    "-Plan", $Plan,
-    "-Prompt", $prompt,
-    "-NPredict", "16",
-    "-CtxSize", "4096"
-)
+$runnerArgs = @{
+    Model = $Model
+    Plan = $Plan
+    Prompt = $prompt
+    NPredict = 16
+    CtxSize = 4096
+}
 
 if (-not [string]::IsNullOrWhiteSpace($OutputDir)) {
-    $runnerArgs += @("-OutputDir", $OutputDir)
+    $runnerArgs.OutputDir = $OutputDir
 }
 
 & $runner @runnerArgs
