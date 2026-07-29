@@ -12,6 +12,7 @@ on:
       - 'ggml/src/ggml-cuda/mmq.cu'
       - 'ggml/src/ggml-cuda/mmvq.cu'
       - 'tools/server/server.cpp'
+      - 'tools/moe-plan/run-u3-prefill.ps1'
 
 permissions:
   contents: write
@@ -76,6 +77,8 @@ jobs:
         run: |
           $null = [scriptblock]::Create(
             (Get-Content .\tools\moe-plan\run-u3.ps1 -Raw -Encoding UTF8))
+          $null = [scriptblock]::Create(
+            (Get-Content .\tools\moe-plan\run-u3-prefill.ps1 -Raw -Encoding UTF8))
 
       - name: Configure targeted U3 build
         shell: cmd
@@ -101,6 +104,7 @@ jobs:
           Copy-Item "$src\llama-moe-load-check.exe" $dst
           Copy-Item "$src\llama-moe-plan-check.exe" $dst
           Copy-Item '.\tools\moe-plan\run-u3.ps1' "$dst\run-moe-u3.ps1"
+          Copy-Item '.\tools\moe-plan\run-u3-prefill.ps1' "$dst\run-moe-u3-prefill.ps1"
           Copy-Item '.\tools\moe-plan\run-u3.cmd' "$dst\run-moe-u3.cmd"
           Copy-Item LICENSE $dst
 
@@ -183,13 +187,18 @@ jobs:
           Startup validation: packaged checker, planner and server executed with packaged CUDA DLLs
           Supported targets: Qwen3.5/3.6 MoE Q4_K_M and Q5_K_M, one NVIDIA GPU
 
-          Run once per quant from this directory:
+          Run both hardware gates per quant from this directory:
 
           .\run-moe-u3.cmd `
             -Model "B:\path\model.gguf" `
             -Plan "B:\path\matching-static-plan.json"
 
-          Return the generated moe-u3-result-*.zip for each Q4/Q5 run.
+          .\run-u3-prefill.ps1 `
+            -Model "B:\path\model.gguf" `
+            -Plan "B:\path\matching-static-plan.json"
+
+          The first gate covers tiny decode/MMVQ. The second uses a longer deterministic prompt and covers multi-token MMQ prefill.
+          Return the generated result ZIPs for Q4 and Q5.
           '@ | Set-Content "$dst\U3-BUILD.txt" -Encoding UTF8
 
           Get-ChildItem $dst -File | Sort-Object Name | ForEach-Object {
