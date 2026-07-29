@@ -19,7 +19,12 @@ static bool ggml_uncaught_exception_init = []{
         return false;
     }
     const auto prev{std::get_terminate()};
-    GGML_ASSERT(prev != ggml_uncaught_exception);
+    // Static Windows builds may link this initialization through more than
+    // one dependency path. Re-registering the same handler must be a no-op;
+    // assigning it as its own predecessor would recurse during termination.
+    if (prev == ggml_uncaught_exception) {
+        return true;
+    }
     previous_terminate_handler = prev;
     std::set_terminate(ggml_uncaught_exception);
     return true;

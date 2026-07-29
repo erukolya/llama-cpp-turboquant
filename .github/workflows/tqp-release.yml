@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - 'agent/moe-expert-stats'
+      - 'agent/static-moe-expert-placement'
     tags:
       - 'tqp-v*'
     paths:
@@ -62,6 +63,12 @@ jobs:
           robocopy "${{ env.CUDA_PATH }}\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
           robocopy "${{ env.CUDA_PATH }}\lib" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
           robocopy "${{ env.CUDA_PATH }}\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+
+          New-Item -ItemType Directory -Path "$dst\tools\moe-plan" -Force | Out-Null
+          Copy-Item .\tools\moe-plan\moe_plan.py "$dst\tools\moe-plan\"
+          Copy-Item .\tools\moe-plan\run-u1.ps1 "$dst\run-moe-u1.ps1"
+          Copy-Item .\gguf-py "$dst\gguf-py" -Recurse
+
           7z a "turboquant-plus-${{ env.TQP_VERSION }}-windows-x64-cuda${{ matrix.cuda }}.zip" .\build\bin\Release\*
 
       - name: Upload

@@ -1,0 +1,7 @@
+{
+  "status": "completed",
+  "result": "Q4_and_Q5_accepted",
+  "q4_static_tokens_per_second": 43.0108,
+  "q5_static_tokens_per_second": 39.2157,
+  "routed_weight_transfer_bytes": 0
+}

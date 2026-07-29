@@ -1,4 +1,6 @@
 #include "llama-model.h"
+#include "llama-moe-placement.h"
+#include "llama-moe-storage.h"
 
 #include "llama-arch.h"
 #include "llama-ext.h"
@@ -1004,6 +1006,12 @@ struct llama_model::impl {
     layer_dev dev_output = {};
     std::vector<layer_dev> dev_layer;
 
+    std::unique_ptr<llama_moe_load_placement_snapshot> moe_placement;
+    llama_moe_compact_storage moe_cpu_storage;
+    llama_moe_compact_storage moe_gpu_storage;
+    llama_moe_compact_storage moe_cpu_route_storage;
+    llama_moe_compact_storage moe_gpu_route_storage;
+
     bool has_tensor_overrides;
 };
 
@@ -1190,6 +1198,18 @@ void llama_model_base::load_hparams(llama_model_loader & ml) {
 
     // per-arch hparams
     load_arch_hparams(ml);
+
+    if (const auto * placement = llama_moe_load_placement_current()) {
+        std::string placement_error;
+        if (!llama_moe_load_placement_snapshot_validate_dimensions(
+                *placement, hparams.n_layer(), hparams.n_expert, placement_error)) {
+            throw std::runtime_error("static MoE placement does not match model hparams: " + placement_error);
+        }
+        pimpl->moe_placement = std::make_unique<llama_moe_load_placement_snapshot>(*placement);
+        LLAMA_LOG_INFO("%s: copied static MoE placement into model: layers=%zu, experts=%u, CPU=%u, GPU=%u\n",
+            __func__, pimpl->moe_placement->layers.size(), hparams.n_expert,
+            pimpl->moe_placement->cpu_expert_count, pimpl->moe_placement->gpu_expert_count);
+    }
 
     pimpl->n_bytes = ml.n_bytes;
 
@@ -2688,6 +2708,42 @@ llama_model_base::llama_model_base(const struct llama_model_params & params) : l
 ggml_tensor * llama_model_base::create_tensor(const LLM_TN_IMPL & tn, const std::initializer_list<int64_t> & ne, int flags) {
     GGML_ASSERT(ml != nullptr);
     return create_tensor(*ml, tn, ne, flags);
+}
+
+const llama_moe_load_placement_snapshot * llama_model_base::moe_placement() const noexcept {
+    return pimpl->moe_placement.get();
+}
+
+llama_moe_compact_storage & llama_model_base::moe_cpu_storage() noexcept {
+    return pimpl->moe_cpu_storage;
+}
+
+llama_moe_compact_storage & llama_model_base::moe_gpu_storage() noexcept {
+    return pimpl->moe_gpu_storage;
+}
+
+const llama_moe_compact_storage & llama_model_base::moe_cpu_storage() const noexcept {
+    return pimpl->moe_cpu_storage;
+}
+
+const llama_moe_compact_storage & llama_model_base::moe_gpu_storage() const noexcept {
+    return pimpl->moe_gpu_storage;
+}
+
+llama_moe_compact_storage & llama_model_base::moe_cpu_route_storage() noexcept {
+    return pimpl->moe_cpu_route_storage;
+}
+
+llama_moe_compact_storage & llama_model_base::moe_gpu_route_storage() noexcept {
+    return pimpl->moe_gpu_route_storage;
+}
+
+const llama_moe_compact_storage & llama_model_base::moe_cpu_route_storage() const noexcept {
+    return pimpl->moe_cpu_route_storage;
+}
+
+const llama_moe_compact_storage & llama_model_base::moe_gpu_route_storage() const noexcept {
+    return pimpl->moe_gpu_route_storage;
 }
 
 void llama_model_base::create_tensor_gate_up_exps(llama_layer & layer, int bid, int64_t n_embd_, int64_t n_ff_, int64_t n_expert_, int flags) {

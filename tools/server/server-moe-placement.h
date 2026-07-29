@@ -59,7 +59,11 @@ private:
         int layer = -1;
         int64_t n_experts = 0;
         uint64_t size_bytes = 0;
+        uint64_t expert_stride_bytes = 0;
         std::string tensor;
+        std::string type;
+        int64_t ne[4] = {0, 0, 0, 0};
+        uint64_t nb[4] = {0, 0, 0, 0};
         std::string storage;
         std::string buffer;
         std::string device;
@@ -121,7 +125,13 @@ private:
         entry.layer = layer;
         entry.n_experts = tensor->ne[2];
         entry.size_bytes = static_cast<uint64_t>(ggml_nbytes(tensor));
+        entry.expert_stride_bytes = tensor->ne[2] > 0 ? static_cast<uint64_t>(tensor->nb[2]) : 0;
         entry.tensor = tensor->name;
+        entry.type = ggml_type_name(tensor->type);
+        for (int dimension = 0; dimension < 4; ++dimension) {
+            entry.ne[dimension] = tensor->ne[dimension];
+            entry.nb[dimension] = static_cast<uint64_t>(tensor->nb[dimension]);
+        }
         entry.storage = storage_name(tensor->buffer);
 
         const char * buffer_name = ggml_backend_buffer_name(tensor->buffer);
@@ -142,14 +152,19 @@ private:
             return;
         }
 
-        output << "layer,tensor,expert_first,expert_last,storage,buffer,device,size_mib\n";
+        output << "layer,tensor,expert_first,expert_last,storage,buffer,device,size_mib,size_bytes,n_experts,"
+                  "expert_stride_bytes,type,ne0,ne1,ne2,ne3,nb0,nb1,nb2,nb3\n";
         output << std::fixed << std::setprecision(3);
 
         for (const auto & entry : entries_) {
             const int64_t expert_last = entry.n_experts > 0 ? entry.n_experts - 1 : -1;
             output << entry.layer << ',' << csv_escape(entry.tensor) << ",0," << expert_last << ','
                    << entry.storage << ',' << csv_escape(entry.buffer) << ',' << csv_escape(entry.device) << ','
-                   << static_cast<double>(entry.size_bytes) / (1024.0 * 1024.0) << '\n';
+                   << static_cast<double>(entry.size_bytes) / (1024.0 * 1024.0) << ','
+                   << entry.size_bytes << ',' << entry.n_experts << ',' << entry.expert_stride_bytes << ','
+                   << csv_escape(entry.type) << ','
+                   << entry.ne[0] << ',' << entry.ne[1] << ',' << entry.ne[2] << ',' << entry.ne[3] << ','
+                   << entry.nb[0] << ',' << entry.nb[1] << ',' << entry.nb[2] << ',' << entry.nb[3] << '\n';
         }
 
         output.flush();

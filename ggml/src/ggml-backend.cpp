@@ -818,6 +818,9 @@ struct ggml_backend_sched {
 
     bool op_offload;
 
+    struct ggml_backend_sched_moe_copy_stats moe_copy_stats;
+    struct ggml_backend_sched_moe_exec_stats moe_exec_stats;
+
     int debug;
 
     // used for debugging graph reallocations [GGML_SCHED_DEBUG_REALLOC]
@@ -1546,6 +1549,21 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
     std::vector<int32_t> ids;
     std::vector<ggml_bitset_t> used_ids;
 
+    auto record_moe_exec = [&](ggml_backend_t backend, const ggml_cgraph * graph) {
+        uint64_t count = 0;
+        for (int i = 0; i < graph->n_nodes; ++i) {
+            count += graph->nodes[i]->op == GGML_OP_MUL_MAT_ID;
+        }
+        if (count == 0) {
+            return;
+        }
+        if (ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_CPU) {
+            sched->moe_exec_stats.cpu_ops += count;
+        } else {
+            sched->moe_exec_stats.accelerator_ops += count;
+        }
+    };
+
     for (int split_id = 0; split_id < sched->n_splits; split_id++) {
         struct ggml_backend_sched_split * split = &splits[split_id];
         int split_backend_id = split->backend_id;
@@ -1581,6 +1599,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     (node->src[0] == input_cpy && node->op == GGML_OP_MUL_MAT_ID)
                     //|| (node->src[1] == input_cpy && node->op == GGML_OP_ADD_ID) /* GGML_OP_ADD_ID weights are small and not worth splitting */
                     )) {
+
+                    sched->moe_copy_stats.weight_inputs++;
 
                     const int64_t n_expert   = node->op == GGML_OP_MUL_MAT_ID ? input->ne[2] : input->ne[1];
                     const size_t expert_size = node->op == GGML_OP_MUL_MAT_ID ? input->nb[2] : input->nb[1];
@@ -1623,16 +1643,23 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     // group consecutive experts and copy them together
                     auto copy_experts = [&](int32_t first_id, int32_t last_id) {
                         const size_t expert_offset = first_id * expert_size;
-                        const size_t expert_size_copy =  (last_id - first_id + 1) * expert_size;
+                        const size_t expert_count = last_id - first_id + 1;
+                        const size_t expert_size_copy = expert_count * expert_size;
                         const size_t padding = std::min<size_t>(expert_size, 512);
                         const size_t padding_end = last_id < n_expert - 1 ? padding : 0;
+                        const size_t transfer_size = expert_size_copy + padding_end;
+
+                        sched->moe_copy_stats.weight_copy_bytes += transfer_size;
+                        sched->moe_copy_stats.weight_payload_bytes += expert_size_copy;
+                        sched->moe_copy_stats.expert_slices += expert_count;
+                        sched->moe_copy_stats.copy_calls++;
 
                         ggml_backend_tensor_set_async(split_backend,
                             input_cpy,
                             (const uint8_t *)input->data + expert_offset, expert_offset,
                             // copy a bit extra at the to ensure there are no NaNs in the padding of the last expert
                             // this is necessary for MMQ in the CUDA backend
-                            expert_size_copy + padding_end);
+                            transfer_size);
                     };
 
                     int id = 0;
@@ -1675,6 +1702,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         }
 
         if (!sched->callback_eval) {
+            record_moe_exec(split_backend, &split->graph);
             enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);
             if (ec != GGML_STATUS_SUCCESS) {
                 return ec;
@@ -1697,6 +1725,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
 
                 struct ggml_cgraph gv = ggml_graph_view(&split->graph, j0, j1 + 1);
 
+                record_moe_exec(split_backend, &gv);
                 enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &gv);
                 if (ec != GGML_STATUS_SUCCESS) {
                     return ec;
@@ -1928,6 +1957,26 @@ int ggml_backend_sched_get_n_splits(ggml_backend_sched_t sched) {
 int ggml_backend_sched_get_n_copies(ggml_backend_sched_t sched) {
     GGML_ASSERT(sched);
     return sched->n_copies;
+}
+
+struct ggml_backend_sched_moe_copy_stats ggml_backend_sched_get_moe_copy_stats(ggml_backend_sched_t sched) {
+    GGML_ASSERT(sched);
+    return sched->moe_copy_stats;
+}
+
+void ggml_backend_sched_reset_moe_copy_stats(ggml_backend_sched_t sched) {
+    GGML_ASSERT(sched);
+    sched->moe_copy_stats = {};
+}
+
+struct ggml_backend_sched_moe_exec_stats ggml_backend_sched_get_moe_exec_stats(ggml_backend_sched_t sched) {
+    GGML_ASSERT(sched);
+    return sched->moe_exec_stats;
+}
+
+void ggml_backend_sched_reset_moe_exec_stats(ggml_backend_sched_t sched) {
+    GGML_ASSERT(sched);
+    sched->moe_exec_stats = {};
 }
 
 int ggml_backend_sched_get_n_backends(ggml_backend_sched_t sched) {

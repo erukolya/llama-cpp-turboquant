@@ -1,0 +1,239 @@
+name: MoE U3 CUDA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/static-moe-expert-placement
+    paths:
+      - '.github/workflows/moe-u3-cuda.yml'
+      - 'ggml/src/ggml-cuda/ggml-cuda.cu'
+      - 'ggml/src/ggml-cuda/mmid.cu'
+      - 'ggml/src/ggml-cuda/mmq.cu'
+      - 'ggml/src/ggml-cuda/mmvq.cu'
+      - 'tools/server/server.cpp'
+      - 'tools/moe-plan/run-u3-prefill.ps1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_ARGS: >-
+    -DBUILD_SHARED_LIBS=OFF
+    -DLLAMA_CURL=OFF
+    -DLLAMA_BUILD_EXAMPLES=OFF
+    -DLLAMA_BUILD_TESTS=OFF
+    -DLLAMA_BUILD_TOOLS=ON
+    -DLLAMA_BUILD_SERVER=ON
+    -DGGML_NATIVE=OFF
+    -DGGML_CUDA=ON
+    -DGGML_CUDA_FA_ALL_QUANTS=ON
+    -DCMAKE_CUDA_ARCHITECTURES=120
+
+jobs:
+  windows-cuda-13-3:
+    runs-on: windows-2022
+
+    steps:
+      - name: Clone
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Record active U3 run
+        shell: pwsh
+        run: |
+          @"
+          status=in_progress
+          run=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          commit=${{ github.sha }}
+          recorded_at_utc=$([DateTime]::UtcNow.ToString('o'))
+          "@ | Set-Content '.github\moe-u3-build-status.txt' -Encoding UTF8
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add '.github\moe-u3-build-status.txt'
+          if (-not (git diff --cached --quiet)) {
+              git commit -m "ci: record active MoE U3 run ${{ github.run_id }}"
+              git pull --rebase origin agent/static-moe-expert-placement
+              git push origin HEAD:agent/static-moe-expert-placement
+          }
+
+      - name: Install CUDA 13.3
+        uses: ./.github/actions/windows-setup-cuda
+        with:
+          cuda_version: '13.3'
+
+      - name: Install Ninja
+        shell: pwsh
+        run: choco install ninja --no-progress
+
+      - name: Validate U3 PowerShell
+        shell: pwsh
+        run: |
+          $null = [scriptblock]::Create(
+            (Get-Content .\tools\moe-plan\run-u3.ps1 -Raw -Encoding UTF8))
+          $null = [scriptblock]::Create(
+            (Get-Content .\tools\moe-plan\run-u3-prefill.ps1 -Raw -Encoding UTF8))
+
+      - name: Configure targeted U3 build
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          cmake -S . -B build -G "Ninja Multi-Config" %CMAKE_ARGS%
+
+      - name: Build U3 targets
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
+          cmake --build build --config Release -j %NINJA_JOBS% --target llama-server llama-moe-load-check llama-moe-plan-check
+
+      - name: Prepare packaged U3 validator
+        shell: pwsh
+        run: |
+          $src = '.\build\bin\Release'
+          $dst = '.\moe-u3-package'
+          New-Item -ItemType Directory -Path $dst -Force | Out-Null
+
+          Copy-Item "$src\llama-server.exe" $dst
+          Copy-Item "$src\llama-moe-load-check.exe" $dst
+          Copy-Item "$src\llama-moe-plan-check.exe" $dst
+          Copy-Item '.\tools\moe-plan\run-u3.ps1' "$dst\run-moe-u3.ps1"
+          Copy-Item '.\tools\moe-plan\run-u3-prefill.ps1' "$dst\run-moe-u3-prefill.ps1"
+          Copy-Item '.\tools\moe-plan\run-u3.cmd' "$dst\run-moe-u3.cmd"
+          Copy-Item LICENSE $dst
+
+          $candidateDirs = @(
+              (Join-Path $env:CUDA_PATH 'bin'),
+              (Join-Path $env:CUDA_PATH 'bin\x64'),
+              (Join-Path $env:CUDA_PATH 'lib')
+          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Container }
+
+          if ($candidateDirs.Count -eq 0) {
+              throw "No existing CUDA runtime directories under CUDA_PATH=$env:CUDA_PATH"
+          }
+
+          $patterns = @('cudart64_*.dll', 'cublas64_*.dll', 'cublasLt64_*.dll')
+          foreach ($pattern in $patterns) {
+              $matches = @()
+              foreach ($dir in $candidateDirs) {
+                  $matches += Get-ChildItem -LiteralPath $dir -Filter $pattern -File -ErrorAction SilentlyContinue
+              }
+              $matches = @($matches | Sort-Object FullName -Unique)
+              if ($matches.Count -eq 0) {
+                  throw "Required CUDA DLL pattern not found: $pattern; searched: $($candidateDirs -join ', ')"
+              }
+              foreach ($file in $matches) {
+                  Copy-Item -LiteralPath $file.FullName -Destination $dst -Force
+              }
+          }
+
+          Get-ChildItem -LiteralPath $dst -File | Sort-Object Name |
+              Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: Smoke-test packaged executables
+        shell: pwsh
+        run: |
+          $dst = (Resolve-Path '.\moe-u3-package').Path
+          $oldPath = $env:PATH
+          Remove-Item Env:GGML_NO_BACKTRACE -ErrorAction SilentlyContinue
+          $env:PATH = "$dst;$oldPath"
+
+          try {
+              Push-Location $dst
+
+              & '.\llama-moe-load-check.exe' --help 2>&1 |
+                  Tee-Object -FilePath '.\checker-help.log'
+              $checkerExit = $LASTEXITCODE
+              if ($checkerExit -ne 0) {
+                  throw "llama-moe-load-check packaged startup smoke test failed: $checkerExit"
+              }
+
+              & '.\llama-moe-plan-check.exe' --help 2>&1 |
+                  Tee-Object -FilePath '.\planner-help.log'
+              $plannerExit = $LASTEXITCODE
+              if ($plannerExit -ne 0) {
+                  throw "llama-moe-plan-check packaged startup smoke test failed: $plannerExit"
+              }
+
+              & '.\llama-server.exe' --version 2>&1 |
+                  Tee-Object -FilePath '.\server-version.log'
+              $serverExit = $LASTEXITCODE
+              if ($serverExit -ne 0) {
+                  throw "llama-server packaged startup smoke test failed: $serverExit"
+              }
+          } finally {
+              Pop-Location
+              $env:PATH = $oldPath
+          }
+
+      - name: Finalize U3 package
+        shell: pwsh
+        run: |
+          $dst = '.\moe-u3-package'
+
+          @'
+          Branch: agent/static-moe-expert-placement
+          Commit: ${{ github.sha }}
+          CUDA: 13.3
+          CUDA architecture: 120
+          Build: targeted static llama-server + U2/U3 validators
+          Fixes: guarded MMVQ -1 IDs, initialized missing-route MMQ maps, forced CPU compact experts to stay on CPU, and idempotent GGML terminate initialization
+          Startup validation: packaged checker, planner and server executed with packaged CUDA DLLs
+          Supported targets: Qwen3.5/3.6 MoE Q4_K_M and Q5_K_M, one NVIDIA GPU
+
+          Run both hardware gates per quant from this directory:
+
+          .\run-moe-u3.cmd `
+            -Model "B:\path\model.gguf" `
+            -Plan "B:\path\matching-static-plan.json"
+
+          .\run-u3-prefill.ps1 `
+            -Model "B:\path\model.gguf" `
+            -Plan "B:\path\matching-static-plan.json"
+
+          The first gate covers tiny decode/MMVQ. The second uses a longer deterministic prompt and covers multi-token MMQ prefill.
+          Return the generated result ZIPs for Q4 and Q5.
+          '@ | Set-Content "$dst\U3-BUILD.txt" -Encoding UTF8
+
+          Get-ChildItem $dst -File | Sort-Object Name | ForEach-Object {
+              "{0}  {1}" -f ((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()), $_.Name
+          } | Set-Content "$dst\U3-FILES-SHA256.txt" -Encoding UTF8
+
+          7z a moe-u3-windows-x64-cuda13.3-sm120-dll-copy-fix.zip "$dst\*"
+          Get-FileHash .\moe-u3-windows-x64-cuda13.3-sm120-dll-copy-fix.zip -Algorithm SHA256 |
+              Format-List | Out-File .\U3-PACKAGE-SHA256.txt -Encoding utf8
+
+      - name: Upload U3 package
+        uses: actions/upload-artifact@v6
+        with:
+          name: moe-u3-windows-x64-cuda13.3-sm120-dll-copy-fix
+          path: |
+            moe-u3-windows-x64-cuda13.3-sm120-dll-copy-fix.zip
+            U3-PACKAGE-SHA256.txt
+          retention-days: 7
+
+      - name: Record U3 build status
+        if: always()
+        shell: pwsh
+        run: |
+          $status = '${{ job.status }}'
+          @"
+          status=$status
+          run=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          commit=${{ github.sha }}
+          recorded_at_utc=$([DateTime]::UtcNow.ToString('o'))
+          "@ | Set-Content '.github\moe-u3-build-status.txt' -Encoding UTF8
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add '.github\moe-u3-build-status.txt'
+          if (git diff --cached --quiet) { exit 0 }
+          git commit -m "ci: record MoE U3 build $status"
+          git pull --rebase origin agent/static-moe-expert-placement
+          git push origin HEAD:agent/static-moe-expert-placement

@@ -17,6 +17,8 @@
 struct llama_cparams;
 struct llama_ubatch;
 struct llama_model_loader;
+struct llama_moe_load_placement_snapshot;
+class llama_moe_compact_storage;
 
 // available models
 enum llm_type {
@@ -306,6 +308,20 @@ struct llama_layer {
     struct ggml_tensor * ffn_down_exps     = nullptr;
     struct ggml_tensor * ffn_up_exps       = nullptr;
     struct ggml_tensor * ffn_gate_up_exps  = nullptr;
+
+    // Static MoE compact tensors. These are metadata pointers into the
+    // model-owned CPU/GPU storage buffers, not additional weight copies.
+    struct ggml_tensor * ffn_gate_exps_cpu    = nullptr;
+    struct ggml_tensor * ffn_gate_exps_gpu    = nullptr;
+    struct ggml_tensor * ffn_down_exps_cpu    = nullptr;
+    struct ggml_tensor * ffn_down_exps_gpu    = nullptr;
+    struct ggml_tensor * ffn_up_exps_cpu      = nullptr;
+    struct ggml_tensor * ffn_up_exps_gpu      = nullptr;
+    struct ggml_tensor * ffn_gate_up_exps_cpu = nullptr;
+    struct ggml_tensor * ffn_gate_up_exps_gpu = nullptr;
+    struct ggml_tensor * ffn_route_map_cpu     = nullptr;
+    struct ggml_tensor * ffn_route_map_gpu     = nullptr;
+
     struct ggml_tensor * ffn_gate_inp_b    = nullptr;
     struct ggml_tensor * ffn_gate_exps_b   = nullptr;
     struct ggml_tensor * ffn_down_exps_b   = nullptr;
@@ -706,6 +722,16 @@ struct llama_model_base : public llama_model {
     // helper: try merged gate_up_exps first, fall back to separate gate and up
     void create_tensor_gate_up_exps(llama_layer & layer, int bid, int64_t n_embd_,
                 int64_t n_ff_, int64_t n_expert_, int flags);
+
+    const llama_moe_load_placement_snapshot * moe_placement() const noexcept;
+    llama_moe_compact_storage & moe_cpu_storage() noexcept;
+    llama_moe_compact_storage & moe_gpu_storage() noexcept;
+    const llama_moe_compact_storage & moe_cpu_storage() const noexcept;
+    const llama_moe_compact_storage & moe_gpu_storage() const noexcept;
+    llama_moe_compact_storage & moe_cpu_route_storage() noexcept;
+    llama_moe_compact_storage & moe_gpu_route_storage() noexcept;
+    const llama_moe_compact_storage & moe_cpu_route_storage() const noexcept;
+    const llama_moe_compact_storage & moe_gpu_route_storage() const noexcept;
 
     // helper: try to load merged qkv first, fall back to separate q, k, v
     void create_tensor_qkv(llama_layer & layer, int bid,

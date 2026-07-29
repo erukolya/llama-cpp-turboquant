@@ -779,6 +779,14 @@ struct llm_graph_qkv {
     ggml_tensor * v; // [n_embd_head, n_head_kv, n_tokens]
 };
 
+struct llm_graph_moe_routing {
+    ggml_tensor * selected_experts = nullptr; // [n_expert_used, n_tokens], global or local IDs
+    ggml_tensor * weights = nullptr;          // [1, n_expert_used, n_tokens]
+};
+
+constexpr int32_t LLM_MOE_MUL_MAT_ID_MISSING_MAGIC = 0x4D4F4553;
+
+
 struct llm_graph_context {
     const llm_arch arch;
 
@@ -857,7 +865,8 @@ struct llm_graph_context {
     ggml_tensor * build_lora_mm_id(
               ggml_tensor * w,   // ggml_tensor * as
               ggml_tensor * cur, // ggml_tensor * b
-              ggml_tensor * ids) const;
+              ggml_tensor * ids,
+                      bool   allow_missing_ids = false) const;
 
     ggml_tensor * build_norm(
              ggml_tensor * cur,
@@ -892,6 +901,39 @@ struct llm_graph_context {
          llm_ffn_op_type   type_op,
        llm_ffn_gate_type   type_gate,
                      int   il) const;
+
+    llm_graph_moe_routing build_moe_routing(
+             ggml_tensor * cur,
+             ggml_tensor * gate_inp,
+             ggml_tensor * gate_inp_b,
+             ggml_tensor * exp_probs_b,
+                 int64_t   n_expert,
+                 int64_t   n_expert_used,
+                    bool   norm_w,
+                   float   w_scale,
+        llama_expert_gating_func_type gating_op,
+                     int   il,
+             ggml_tensor * probs_in = nullptr) const;
+
+    ggml_tensor * build_moe_ffn_experts(
+             ggml_tensor * cur,
+             ggml_tensor * up_exps,
+             ggml_tensor * up_exps_b,
+             ggml_tensor * gate_exps,
+             ggml_tensor * gate_exps_b,
+             ggml_tensor * down_exps,
+             ggml_tensor * down_exps_b,
+                 int64_t   n_expert,
+                 int64_t   n_expert_used,
+         llm_ffn_op_type   type_op,
+                     int   il,
+        const llm_graph_moe_routing & routing,
+             ggml_tensor * gate_up_exps = nullptr,
+             ggml_tensor * gate_up_exps_b = nullptr,
+             ggml_tensor * up_exps_s = nullptr,
+             ggml_tensor * gate_exps_s = nullptr,
+             ggml_tensor * down_exps_s = nullptr,
+                    bool   allow_missing_ids = false) const;
 
     // build MoE FFN without bias tensors
     ggml_tensor * build_moe_ffn(

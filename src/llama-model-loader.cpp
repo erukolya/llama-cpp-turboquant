@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <future>
+#include <limits>
 #include <regex>
 
 static const size_t kiB = 1024;
@@ -1409,6 +1410,82 @@ void llama_model_loader::load_data_for(struct ggml_tensor * cur) const {
 
     if (check_tensors && !ggml_validate_row_data(cur->type, cur->data, ggml_nbytes(cur))) {
         throw std::runtime_error(format("tensor '%s' has invalid data", ggml_get_name(cur)));
+    }
+}
+
+void llama_model_loader::load_tensor_slices(
+        struct ggml_tensor * destination,
+        const std::string & source_name,
+        const std::vector<llama_moe_pool_copy_span> & spans) {
+    if (destination == nullptr) {
+        throw std::runtime_error(format("%s: compact destination tensor is null", __func__));
+    }
+    if (destination->buffer == nullptr) {
+        throw std::runtime_error(format("%s: compact destination tensor '%s' is not allocated",
+            __func__, ggml_get_name(destination)));
+    }
+
+    const auto & weight = require_weight(source_name.c_str());
+    const auto * source = weight.tensor;
+    if (source->type != destination->type) {
+        throw std::runtime_error(format(
+            "%s: source tensor '%s' has type %s but destination '%s' has type %s",
+            __func__, source_name.c_str(), ggml_type_name(source->type),
+            ggml_get_name(destination), ggml_type_name(destination->type)));
+    }
+
+    const uint64_t source_size = ggml_nbytes(source);
+    const uint64_t destination_size = ggml_nbytes(destination);
+    std::string validation_error;
+    if (!llama_moe_pool_copy_spans_validate(
+            source_size, destination_size, spans, validation_error)) {
+        throw std::runtime_error(format("%s: invalid copy spans for '%s': %s",
+            __func__, ggml_get_name(destination), validation_error.c_str()));
+    }
+
+    if (!use_mmap && use_direct_io) {
+        throw std::runtime_error(format(
+            "%s: compact expert slice loading with direct I/O is not supported yet; use mmap",
+            __func__));
+    }
+    if (destination_size > size_data - std::min(size_done, size_data)) {
+        throw std::runtime_error(format(
+            "%s: compact slice bytes exceed remaining model-load progress budget", __func__));
+    }
+
+    std::vector<no_init<uint8_t>> read_buf;
+    for (const auto & span : spans) {
+        if (span.source_offset_bytes > std::numeric_limits<size_t>::max() - weight.offs ||
+            span.destination_offset_bytes > std::numeric_limits<size_t>::max() ||
+            span.size_bytes > std::numeric_limits<size_t>::max()) {
+            throw std::runtime_error(format("%s: compact copy span does not fit size_t", __func__));
+        }
+
+        const size_t source_offset = weight.offs + static_cast<size_t>(span.source_offset_bytes);
+        const size_t destination_offset = static_cast<size_t>(span.destination_offset_bytes);
+        const size_t copy_size = static_cast<size_t>(span.size_bytes);
+        const void * data = nullptr;
+
+        if (use_mmap) {
+            const auto & mapping = mappings.at(weight.idx);
+            data = static_cast<const uint8_t *>(mapping->addr()) + source_offset;
+        } else {
+            GGML_ASSERT(weight.idx < files.size());
+            const auto & file = files.at(weight.idx);
+            read_buf.resize(copy_size);
+            file->seek(source_offset, SEEK_SET);
+            file->read_raw(read_buf.data(), copy_size);
+            data = read_buf.data();
+        }
+
+        if (check_tensors && !ggml_validate_row_data(destination->type, data, copy_size)) {
+            throw std::runtime_error(format(
+                "%s: source slice for compact tensor '%s' contains invalid data",
+                __func__, ggml_get_name(destination)));
+        }
+
+        ggml_backend_tensor_set(destination, data, destination_offset, copy_size);
+        size_done += copy_size;
     }
 }
 
