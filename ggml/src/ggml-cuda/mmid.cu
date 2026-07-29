@@ -122,6 +122,16 @@ static void launch_mm_ids_helper(
     GGML_ASSERT(n_tokens          < (1 << 22) && "too few bits in mm_ids_helper_store");
     GGML_ASSERT(n_expert_used_var < (1 << 10) && "too few bits in mm_ids_helper_store");
 
+    // Split static-MoE routes use -1 for slots owned by the other backend. The
+    // helper compacts only valid routes, while the following MMQ quantization
+    // still visits the original token*top-k allocation. Initialize the unused
+    // tail to a safe source row so it cannot contain stale pool indices and
+    // trigger an out-of-bounds CUDA read. expert_bounds keeps those rows out of
+    // the actual matrix multiplication and the destination was pre-zeroed.
+    const size_t n_route_slots = static_cast<size_t>(n_tokens) * n_expert_used_var;
+    CUDA_CHECK(cudaMemsetAsync(ids_src1, 0, n_route_slots * sizeof(*ids_src1), stream));
+    CUDA_CHECK(cudaMemsetAsync(ids_dst,  0, n_route_slots * sizeof(*ids_dst),  stream));
+
     const int id = ggml_cuda_get_device();
     const int warp_size = ggml_cuda_info().devices[id].warp_size;
     const size_t smpbo = ggml_cuda_info().devices[id].smpbo;
