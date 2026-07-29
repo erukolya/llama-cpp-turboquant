@@ -14,9 +14,16 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$runner = Join-Path $PSScriptRoot "run-u3.ps1"
-if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
-    throw "Cannot find run-u3.ps1 next to this script"
+$runner = $null
+foreach ($name in @("run-u3.ps1", "run-moe-u3.ps1")) {
+    $candidate = Join-Path $PSScriptRoot $name
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+        $runner = $candidate
+        break
+    }
+}
+if (-not $runner) {
+    throw "Cannot find run-u3.ps1 or packaged run-moe-u3.ps1 next to this script"
 }
 
 # This prompt is deliberately longer than the MMVQ token threshold. It forces
@@ -24,7 +31,7 @@ if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
 # tiny U3 probe did not exercise. The requested answer remains deterministic so
 # the existing baseline/static lexical-equivalence check is still useful.
 $prompt = @"
-Follow this instruction carefully and ignore all unrelated continuations. Answer the following factual question using exactly one word and no explanation: What is the capital city of France?
+Read this complete factual task carefully. Answer the following question using exactly one word and no explanation: What is the capital city of France?
 "@.Trim()
 
 $runnerArgs = @(
