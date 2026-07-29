@@ -131,6 +131,18 @@ static bool common_params_parse_with_moe_stats(
             }
             g_server_moe_load_placement = std::move(load_placement);
 
+            // CPU compact experts must execute on CPU. The generic scheduler's
+            // host-operation offload path would otherwise move their MUL_MAT_ID
+            // nodes back to CUDA and re-enter the packed selective-copy path,
+            // which is incompatible with split local route IDs and exclusive
+            // CPU/GPU residency. V1 therefore disables host op offload for the
+            // whole context whenever runtime static placement is active.
+            if (!params.no_op_offload) {
+                params.no_op_offload = true;
+                std::fprintf(stderr,
+                    "moe_plan: disabling host operation offload so CPU compact experts execute on CPU\n");
+            }
+
             // Stock warmup routes every expert. That would execute a huge
             // all-expert mixed graph once and does not validate normal top-k
             // decode, so static placement uses the real top-k path immediately.
